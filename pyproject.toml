@@ -1,0 +1,92 @@
+[project]
+name = "parsfet"
+dynamic = ["version"]
+description = "VLSI Process Technology Abstraction Framework"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Sebastian-L"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "rich>=13.0",
+    "typer>=0.9",
+    "matplotlib>=3.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/sebastianlhw/Pars-FET"
+Issues = "https://github.com/sebastianlhw/Pars-FET/issues"
+Repository = "https://github.com/sebastianlhw/Pars-FET"
+
+[project.optional-dependencies]
+ml = ["scikit-learn>=1.3", "umap-learn>=0.5"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "setuptools-scm>=8",
+]
+
+[project.scripts]
+parsfet = "parsfet.cli:app"
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "setuptools-scm>=8",
+    "furo>=2023.9.10",
+    "sphinx-copybutton>=0.5.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "--cov=parsfet"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["testdata", "output"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["parsfet"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
