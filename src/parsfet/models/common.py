@@ -1,4 +1,9 @@
-"""Common type definitions shared across all models"""
+"""Common type definitions and enumerations shared across Pars-FET models.
+
+This module defines fundamental types like operating conditions, process corners,
+threshold voltage flavors, and physical unit handling that are used throughout
+the framework.
+"""
 
 from enum import Enum
 from typing import Optional
@@ -7,7 +12,10 @@ from pydantic import BaseModel, Field
 
 
 class VtFlavor(str, Enum):
-    """Threshold voltage flavor"""
+    """Enumeration of threshold voltage (Vt) flavors.
+
+    Used to categorize cells or libraries based on their leakage/speed trade-off.
+    """
 
     SVT = "svt"  # Standard Vt
     LVT = "lvt"  # Low Vt
@@ -17,17 +25,32 @@ class VtFlavor(str, Enum):
 
 
 class ProcessCorner(str, Enum):
-    """Process corner for PVT variation"""
+    """Enumeration of process corners for PVT (Process, Voltage, Temperature) variation.
 
-    TT = "tt"  # Typical-Typical
-    FF = "ff"  # Fast-Fast
-    SS = "ss"  # Slow-Slow
-    SF = "sf"  # Slow-Fast
-    FS = "fs"  # Fast-Slow
+    Represents the manufacturing process variations:
+    - TT: Typical-Typical (Nominal)
+    - FF: Fast-Fast (Fast NMOS, Fast PMOS)
+    - SS: Slow-Slow (Slow NMOS, Slow PMOS)
+    - SF: Slow-Fast
+    - FS: Fast-Slow
+    """
+
+    TT = "tt"
+    FF = "ff"
+    SS = "ss"
+    SF = "sf"
+    FS = "fs"
 
 
 class OperatingCondition(BaseModel):
-    """PVT corner specification"""
+    """Specification of a PVT (Process, Voltage, Temperature) operating condition.
+
+    Attributes:
+        name: The name of the operating condition (e.g., "ss_0p72v_125c").
+        process: The process corner (e.g., ProcessCorner.SS).
+        voltage: The supply voltage in Volts.
+        temperature: The junction temperature in Celsius.
+    """
 
     name: str = ""
     process: ProcessCorner = ProcessCorner.TT
@@ -38,13 +61,32 @@ class OperatingCondition(BaseModel):
 
 
 class PhysicalUnit(BaseModel):
-    """Value with unit tracking for dimensional analysis"""
+    """Represents a physical quantity with a value and a unit.
+
+    Used for dimensional analysis and unit conversion.
+
+    Attributes:
+        value: The numerical value.
+        unit: The string representation of the unit (e.g., "ns", "pF", "um").
+    """
 
     value: float
-    unit: str  # e.g., "ns", "pF", "um"
+    unit: str
 
     def to(self, target_unit: str) -> "PhysicalUnit":
-        """Convert to target unit (basic conversions)"""
+        """Converts the value to a target unit.
+
+        Currently supports basic conversions for time, capacitance, and length.
+
+        Args:
+            target_unit: The unit string to convert to.
+
+        Returns:
+            A new PhysicalUnit instance with the converted value and target unit.
+
+        Raises:
+            ValueError: If the conversion between the current unit and target unit is not supported.
+        """
         conversions = {
             ("ns", "ps"): 1000.0,
             ("ps", "ns"): 0.001,
@@ -69,13 +111,14 @@ CANONICAL_LENGTH_UNIT = "um"
 
 
 def parse_time_unit(unit_str: str) -> float:
-    """
-    Parse Liberty time_unit string and return multiplier to convert to nanoseconds.
+    """Parses a Liberty `time_unit` string to get a multiplier for nanoseconds.
 
-    Examples:
-        "1ns" -> 1.0
-        "1ps" -> 0.001
-        "100ps" -> 0.1
+    Args:
+        unit_str: The time unit string from the Liberty file (e.g., "1ns", "100ps").
+
+    Returns:
+        A float multiplier to convert values in the given unit to nanoseconds (ns).
+        For example, "100ps" returns 0.1.
     """
     unit_str = unit_str.strip().strip("\"'").lower()
 
@@ -100,14 +143,14 @@ def parse_time_unit(unit_str: str) -> float:
 
 
 def parse_cap_unit(cap_spec) -> float:
-    """
-    Parse Liberty capacitive_load_unit and return multiplier to convert to picofarads.
+    """Parses a Liberty `capacitive_load_unit` spec to get a multiplier for picofarads.
 
-    Liberty format: (value, unit) or "value, unit"
-    Examples:
-        (1, "pf") -> 1.0
-        (1, "ff") -> 0.001
-        (0.01, "pf") -> 0.01
+    Args:
+        cap_spec: The capacitance unit specification, which can be a tuple (value, unit)
+            or a string "value, unit".
+
+    Returns:
+        A float multiplier to convert values to picofarads (pF).
     """
     if isinstance(cap_spec, tuple) and len(cap_spec) >= 2:
         value = float(cap_spec[0])
@@ -134,35 +177,42 @@ def parse_cap_unit(cap_spec) -> float:
 
 
 class UnitNormalizer:
-    """
-    Normalizes Liberty library values to canonical units.
+    """Normalizes Liberty library values to canonical units.
 
-    Canonical units:
+    Canonical units are:
     - Time: nanoseconds (ns)
     - Capacitance: picofarads (pF)
     - Length/Area: micrometers (um)
+
+    This ensures consistent comparison between libraries defined with different units.
     """
 
     def __init__(self, time_unit: str = "1ns", cap_unit=(1.0, "pf")):
-        """
-        Initialize with library's declared units.
+        """Initializes the UnitNormalizer with the library's declared units.
 
         Args:
-            time_unit: Liberty time_unit string (e.g., "1ns", "1ps")
-            cap_unit: Liberty capacitive_load_unit tuple (e.g., (1, "pf"))
+            time_unit: Liberty `time_unit` string (e.g., "1ns", "1ps").
+            cap_unit: Liberty `capacitive_load_unit` tuple (e.g., (1, "pf")).
         """
         self.time_multiplier = parse_time_unit(time_unit)
         self.cap_multiplier = parse_cap_unit(cap_unit)
 
     def normalize_time(self, value: float) -> float:
-        """Convert time value to nanoseconds"""
+        """Converts a time value from library units to nanoseconds."""
         return value * self.time_multiplier
 
     def normalize_capacitance(self, value: float) -> float:
-        """Convert capacitance value to picofarads"""
+        """Converts a capacitance value from library units to picofarads."""
         return value * self.cap_multiplier
 
     @classmethod
     def from_library(cls, library) -> "UnitNormalizer":
-        """Create normalizer from a parsed LibertyLibrary"""
+        """Creates a UnitNormalizer instance from a parsed LibertyLibrary object.
+
+        Args:
+            library: A `LibertyLibrary` instance.
+
+        Returns:
+            A configured `UnitNormalizer`.
+        """
         return cls(time_unit=library.time_unit, cap_unit=library.capacitive_load_unit)

@@ -1,18 +1,14 @@
-"""
-Cell Type Classifier
+"""Cell Type Classifier.
 
-Classifies Liberty cells by parsing their logic function attributes.
-Uses pin DIRECTION (not names) to determine input/output.
+This module categorizes standard cells based on their logical function.
+It analyzes pin directions and boolean function strings to determine if a cell
+is a basic gate (INV, NAND, NOR, etc.), a sequential element (DFF, Latch),
+or a complex logic cell.
 
-Only labels high-confidence cell types; complex logic → 'unknown'.
-
-Supported types:
-- inverter: single input, pure negation
-- buffer: single input, identity function
-- and, or, nand, nor, xor: 2-3 input basic gates
-- flip_flop: cells with ff group
-- latch: cells with latch timing type
-- unknown: everything else (complex logic, tri-state, etc.)
+This classification is crucial for:
+- Finding equivalent cells across libraries.
+- Generating technology fingerprints.
+- Normalizing metrics by cell type.
 """
 
 import re
@@ -26,7 +22,11 @@ if TYPE_CHECKING:
 # Handle multiple syntax variants: Synopsys, Cadence, Verilog
 
 def _normalize_function(func: str) -> str:
-    """Normalize function syntax for easier pattern matching."""
+    """Normalizes boolean function strings for consistent pattern matching.
+
+    Removes whitespace, standardizes negation symbols (e.g., A', ~A -> !A),
+    and strips redundant outer parentheses.
+    """
     # Remove whitespace
     func = func.replace(" ", "")
     # Normalize negation syntax: A' → !A, ~A → !A
@@ -53,13 +53,13 @@ def _normalize_function(func: str) -> str:
 
 
 def _get_input_vars(func: str) -> set[str]:
-    """Extract variable names from function string."""
+    """Extracts variable names from a function string."""
     # Find all single uppercase letters that aren't operators
     return set(re.findall(r"\b([A-Z])\b", func.upper()))
 
 
 def is_negation_only(func: str) -> bool:
-    """Check if function is pure negation (inverter)."""
+    """Checks if the function represents a pure inverter (negation)."""
     func = _normalize_function(func)
     # Patterns: !A, (!A), !(A), !VAR, (!VAR), !(VAR)
     # Support multi-char variable names like A1, IN
@@ -72,14 +72,14 @@ def is_negation_only(func: str) -> bool:
 
 
 def is_identity_only(func: str) -> bool:
-    """Check if function is identity (buffer)."""
+    """Checks if the function represents a buffer (identity)."""
     func = _normalize_function(func)
     # Just a single variable: A, A1, IN
     return bool(re.match(r"^[A-Za-z]\w*$", func))
 
 
 def is_and_gate(func: str) -> bool:
-    """Check if function is AND gate."""
+    """Checks if the function represents an AND gate."""
     func = _normalize_function(func)
     # Patterns: A&B, A*B, (A&B), A1&A2, etc.
     # Support multi-char variable names
@@ -95,7 +95,7 @@ def is_and_gate(func: str) -> bool:
 
 
 def is_or_gate(func: str) -> bool:
-    """Check if function is OR gate."""
+    """Checks if the function represents an OR gate."""
     func = _normalize_function(func)
     var = r"[A-Za-z]\w*"
     patterns = [
@@ -108,7 +108,7 @@ def is_or_gate(func: str) -> bool:
 
 
 def is_nand_gate(func: str) -> bool:
-    """Check if function is NAND gate."""
+    """Checks if the function represents a NAND gate."""
     func = _normalize_function(func)
     var = r"[A-Za-z]\w*"
     # Patterns: !(A&B), !(A*B), !(A1&A2)
@@ -119,7 +119,7 @@ def is_nand_gate(func: str) -> bool:
 
 
 def is_nor_gate(func: str) -> bool:
-    """Check if function is NOR gate."""
+    """Checks if the function represents a NOR gate."""
     func = _normalize_function(func)
     var = r"[A-Za-z]\w*"
     # Patterns: !(A|B), !(A+B), !(A1|A2)
@@ -130,7 +130,7 @@ def is_nor_gate(func: str) -> bool:
 
 
 def is_xor_gate(func: str) -> bool:
-    """Check if function is XOR gate."""
+    """Checks if the function represents an XOR gate."""
     func = _normalize_function(func)
     # XOR is often written as: A^B or complex expressions
     if "^" in func:
@@ -141,47 +141,46 @@ def is_xor_gate(func: str) -> bool:
 
 
 def classify_cell(cell: "Cell") -> str:
-    """
-    Classify cell by parsing logic function.
-    
-    Uses pin DIRECTION (not names) to determine input/output.
-    Only labels confident types; complex logic → 'unknown'.
-    
+    """Classifies a cell type based on its pin directions and logical functions.
+
+    Identifies standard gates (INV, NAND, NOR, etc.) and sequential elements (DFF, Latch).
+    Cells with complex or unrecognizable logic are labeled 'unknown'.
+
     Args:
-        cell: Liberty Cell object
-        
+        cell: The Liberty Cell object to classify.
+
     Returns:
-        One of: inverter, buffer, and, or, nand, nor, xor,
-                flip_flop, latch, unknown
+        A string representing the cell type: 'inverter', 'buffer', 'nand', 'nor',
+        'and', 'or', 'xor', 'flip_flop', 'latch', or 'unknown'.
     """
     # Get input/output pins by direction
     input_pins = [p for p in cell.pins.values() if p.direction == "input"]
     output_pins = [p for p in cell.pins.values() if p.direction == "output"]
-    
+
     # Check for sequential elements first (ff/latch groups)
     if cell.is_sequential:
         # Check timing types for latch vs flip-flop
-        if any('latch' in str(arc.timing_type or '').lower() 
+        if any('latch' in str(arc.timing_type or '').lower()
                for arc in cell.timing_arcs):
             return "latch"
         return "flip_flop"
-    
+
     # Parse combinational functions from output pins
     for pin in output_pins:
         if not pin.function:
             continue
-        
+
         func = pin.function.strip()
         num_inputs = len(input_pins)
-        
+
         # Inverter: single input + pure negation
         if num_inputs == 1 and is_negation_only(func):
             return "inverter"
-        
+
         # Buffer: single input + identity
         if num_inputs == 1 and is_identity_only(func):
             return "buffer"
-        
+
         # Simple gates: 2-3 inputs, basic operations
         if num_inputs in (2, 3):
             if is_nand_gate(func):
@@ -194,5 +193,5 @@ def classify_cell(cell: "Cell") -> str:
                 return "or"
             if is_xor_gate(func):
                 return "xor"
-    
+
     return "unknown"  # Complex or unrecognized

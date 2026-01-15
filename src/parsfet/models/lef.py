@@ -1,4 +1,12 @@
-"""LEF and TechLEF data models"""
+"""LEF (Library Exchange Format) and TechLEF data models.
+
+This module defines Pydantic models for representing the physical design data found
+in LEF files. This includes technology definitions (layers, vias, sites) and
+macro definitions (cell geometry, pins, obstructions).
+
+These models support both standard LEF (macro definitions) and TechLEF (technology
+rules provided by foundries).
+"""
 
 from enum import Enum
 from typing import Any, Optional
@@ -7,7 +15,7 @@ from pydantic import BaseModel, Field
 
 
 class LayerType(str, Enum):
-    """LEF layer types"""
+    """Enumeration of LEF layer types."""
 
     ROUTING = "routing"
     CUT = "cut"
@@ -17,14 +25,31 @@ class LayerType(str, Enum):
 
 
 class LayerDirection(str, Enum):
-    """Preferred routing direction"""
+    """Enumeration of preferred routing directions for metal layers."""
 
     HORIZONTAL = "horizontal"
     VERTICAL = "vertical"
 
 
 class MetalLayer(BaseModel):
-    """Metal or via layer definition"""
+    """Represents a metal or via layer definition in LEF.
+
+    Attributes:
+        name: Layer name (e.g., "M1", "M2").
+        layer_type: Type of the layer (routing, cut, etc.).
+        direction: Preferred routing direction (horizontal/vertical).
+        pitch: Routing pitch in micrometers.
+        width: Default wire width in micrometers.
+        min_width: Minimum width constraint.
+        max_width: Maximum width constraint.
+        spacing: Minimum spacing constraint.
+        resistance: Sheet resistance in Ohm/square.
+        capacitance: Area capacitance in pF/um^2.
+        edge_capacitance: Edge capacitance in pF/um.
+        thickness: Physical thickness of the layer.
+        height: Height above substrate.
+        attributes: Additional unparsed attributes.
+    """
 
     name: str
     layer_type: LayerType = LayerType.ROUTING
@@ -53,7 +78,17 @@ class MetalLayer(BaseModel):
 
 
 class Via(BaseModel):
-    """Via definition connecting two layers"""
+    """Represents a via definition connecting two layers.
+
+    Attributes:
+        name: Via name.
+        layers: List of layers involved [bottom, cut, top].
+        width: Via width.
+        height: Via height.
+        resistance: Via resistance in Ohms.
+        enclosure: Dictionary of enclosure rules per layer.
+        attributes: Additional unparsed attributes.
+    """
 
     name: str
     layers: list[str] = Field(default_factory=list, description="[bottom, cut, top] layers")
@@ -74,7 +109,17 @@ class Via(BaseModel):
 
 
 class Site(BaseModel):
-    """Placement site definition"""
+    """Represents a placement site definition.
+
+    Sites define the grid where standard cells can be placed.
+
+    Attributes:
+        name: Site name.
+        class_type: Class of the site (e.g., "core", "pad").
+        width: Width of the site in micrometers.
+        height: Height of the site in micrometers.
+        symmetry: List of allowed symmetries (X, Y, R90).
+    """
 
     name: str
     class_type: str = "core"  # "core", "pad", "io"
@@ -89,7 +134,13 @@ class Site(BaseModel):
 
 
 class Rect(BaseModel):
-    """Rectangle geometry"""
+    """Represents a rectangular geometry.
+
+    Attributes:
+        layer: Layer name associated with the rectangle.
+        x1, y1: Coordinates of the bottom-left corner.
+        x2, y2: Coordinates of the top-right corner.
+    """
 
     layer: str
     x1: float
@@ -99,19 +150,31 @@ class Rect(BaseModel):
 
     @property
     def width(self) -> float:
+        """Calculates the width of the rectangle."""
         return abs(self.x2 - self.x1)
 
     @property
     def height(self) -> float:
+        """Calculates the height of the rectangle."""
         return abs(self.y2 - self.y1)
 
     @property
     def area(self) -> float:
+        """Calculates the area of the rectangle."""
         return self.width * self.height
 
 
 class MacroPin(BaseModel):
-    """Pin definition within a macro"""
+    """Represents a pin definition within a macro (cell).
+
+    Attributes:
+        name: Pin name.
+        direction: Signal direction (input, output, inout).
+        use: Usage type (signal, power, ground, clock).
+        shape: Pin shape type (abutment, feedthru).
+        ports: List of rectangular geometries defining the pin's physical ports.
+        attributes: Additional unparsed attributes.
+    """
 
     name: str
     direction: str = "input"  # input, output, inout
@@ -127,7 +190,20 @@ class MacroPin(BaseModel):
 
 
 class Macro(BaseModel):
-    """Cell physical (macro) definition"""
+    """Represents a physical macro (cell) definition.
+
+    Attributes:
+        name: Macro name.
+        class_type: Macro class (core, block, pad, etc.).
+        origin: (x, y) coordinates of the origin.
+        size: (width, height) tuple in micrometers.
+        symmetry: Allowed symmetries.
+        site: Name of the site pattern used.
+        pins: Dictionary of pins keyed by pin name.
+        obstructions: List of obstruction rectangles.
+        foreign: Name of the foreign reference (if any).
+        attributes: Additional unparsed attributes.
+    """
 
     name: str
     class_type: str = "core"  # core, block, pad, endcap, cover
@@ -153,21 +229,37 @@ class Macro(BaseModel):
 
     @property
     def width(self) -> float:
+        """Returns the width of the macro."""
         return self.size[0]
 
     @property
     def height(self) -> float:
+        """Returns the height of the macro."""
         return self.size[1]
 
     @property
     def area(self) -> float:
+        """Returns the area of the macro."""
         return self.size[0] * self.size[1]
 
     model_config = {"extra": "allow"}
 
 
 class LEFLibrary(BaseModel):
-    """Complete LEF library (physical cell definitions)"""
+    """Represents a complete LEF library containing physical cell definitions.
+
+    Attributes:
+        version: LEF file version.
+        bus_bit_chars: Characters used for bus bit indexing.
+        divider_char: Hierarchy divider character.
+        units_database: Database units per micron (typically 1000 or 2000).
+        manufacturing_grid: Manufacturing grid resolution.
+        sites: Dictionary of site definitions.
+        layers: Dictionary of layer definitions.
+        vias: Dictionary of via definitions.
+        macros: Dictionary of macro (cell) definitions.
+        attributes: Additional unparsed attributes.
+    """
 
     version: Optional[str] = None
     bus_bit_chars: str = "[]"
@@ -187,22 +279,35 @@ class LEFLibrary(BaseModel):
 
     @property
     def routing_layers(self) -> list[MetalLayer]:
-        """Get only routing metal layers (ordered by layer name)"""
+        """Returns a list of routing metal layers, sorted by name."""
         routing = [l for l in self.layers.values() if l.layer_type == LayerType.ROUTING]
         return sorted(routing, key=lambda x: x.name)
 
     @property
     def cut_layers(self) -> list[MetalLayer]:
-        """Get only via/cut layers"""
+        """Returns a list of cut/via layers."""
         return [l for l in self.layers.values() if l.layer_type == LayerType.CUT]
 
     model_config = {"extra": "allow"}
 
 
 class TechLEF(BaseModel):
-    """
-    Technology LEF - contains only layer/via definitions, no macros.
-    Typically provided by foundry.
+    """Represents a Technology LEF.
+
+    TechLEF files contain only layer, via, and site definitions, but typically
+    no macros. They define the design rules and technology parameters provided
+    by the foundry.
+
+    Attributes:
+        version: LEF version.
+        units_database: Database units per micron.
+        manufacturing_grid: Manufacturing grid.
+        layers: Dictionary of layer definitions.
+        vias: Dictionary of via definitions.
+        sites: Dictionary of site definitions.
+        process_node: Process node identifier (e.g., "7nm").
+        foundry: Foundry name.
+        attributes: Additional unparsed attributes.
     """
 
     version: Optional[str] = None
@@ -224,7 +329,7 @@ class TechLEF(BaseModel):
 
     @property
     def metal_stack_height(self) -> int:
-        """Count of routing metal layers"""
+        """Returns the total number of routing metal layers."""
         return len([l for l in self.layers.values() if l.layer_type == LayerType.ROUTING])
 
     model_config = {"extra": "allow"}

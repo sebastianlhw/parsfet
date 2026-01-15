@@ -1,11 +1,14 @@
-"""
-Technology Fingerprinting
+"""Technology Fingerprinting.
 
-Create compact signatures that identify and characterize process technologies.
+This module provides functionality to generate a "fingerprint" for a semiconductor
+technology library. A fingerprint is a compact, vectorizable signature that
+captures key characteristics such as performance metrics (area, delay, leakage
+normalized to a baseline inverter) and functional diversity.
+
 These fingerprints enable:
-- Clustering similar technologies
-- Quick identification of library characteristics
-- ML-based process prediction
+- Clustering of similar technologies.
+- Rapid identification of library characteristics.
+- Machine Learning-based process node prediction.
 """
 
 import statistics
@@ -18,11 +21,10 @@ from ..normalizers.invd1 import INVD1Normalizer
 
 @dataclass
 class TechnologyFingerprint:
-    """
-    Compact signature of a technology/library.
+    """Represents the compact signature of a technology library.
 
-    This captures the essential characteristics of a library
-    in a way that enables comparison and clustering.
+    Captures both absolute baseline metrics (from the standard inverter) and relative
+    distribution statistics of the entire library.
     """
 
     name: str
@@ -71,11 +73,13 @@ class TechnologyFingerprint:
     vt_flavor: Optional[str] = None
 
     def to_vector(self) -> list[float]:
-        """
-        Convert to feature vector for ML.
+        """Converts the fingerprint to a numerical feature vector.
 
-        The vector contains normalized metrics that work well
-        for clustering and classification.
+        Suitable for use in machine learning algorithms (clustering, classification).
+        The vector contains normalized ratios and counts.
+
+        Returns:
+            A list of floats representing the fingerprint features.
         """
         return [
             self.mean_area_ratio,
@@ -96,7 +100,7 @@ class TechnologyFingerprint:
         ]
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization"""
+        """Converts the fingerprint to a dictionary for JSON serialization."""
         return {
             "name": self.name,
             "baseline": {
@@ -153,14 +157,17 @@ class TechnologyFingerprint:
 
 
 def create_fingerprint(library: LibertyLibrary) -> TechnologyFingerprint:
-    """
-    Generate fingerprint for a library.
+    """Generates a technology fingerprint for the given library.
+
+    Attempts to normalize the library using the standard inverter baseline to
+    extract relative metrics. If no baseline is found, falls back to a basic
+    fingerprint based on cell counts.
 
     Args:
-        library: Parsed Liberty library
+        library: The parsed Liberty library.
 
     Returns:
-        TechnologyFingerprint capturing library characteristics
+        A populated TechnologyFingerprint object.
     """
     # Create normalizer to get baseline and normalized metrics
     try:
@@ -240,7 +247,10 @@ def create_fingerprint(library: LibertyLibrary) -> TechnologyFingerprint:
 
 
 def _create_basic_fingerprint(library: LibertyLibrary) -> TechnologyFingerprint:
-    """Create fingerprint when no baseline cell is available"""
+    """Creates a basic fingerprint when no baseline cell (and thus no timing normalization) is available.
+
+    Only captures cell counts and functional distribution.
+    """
     fp = TechnologyFingerprint(name=library.name)
 
     # Cell counts only
@@ -266,11 +276,18 @@ def _create_basic_fingerprint(library: LibertyLibrary) -> TechnologyFingerprint:
 
 
 def compare_fingerprints(fp_a: TechnologyFingerprint, fp_b: TechnologyFingerprint) -> dict:
-    """
-    Compare two fingerprints and compute similarity metrics.
+    """Compares two technology fingerprints to determine similarity.
+
+    Uses cosine similarity on the feature vectors and provides specific
+    metric comparisons.
+
+    Args:
+        fp_a: First TechnologyFingerprint.
+        fp_b: Second TechnologyFingerprint.
 
     Returns:
-        Dictionary with comparison results
+        A dictionary containing similarity scores (cosine, euclidean) and
+        differences in key metrics.
     """
     # Vector similarity (cosine)
     vec_a = fp_a.to_vector()
@@ -303,4 +320,3 @@ def compare_fingerprints(fp_a: TechnologyFingerprint, fp_b: TechnologyFingerprin
             else 0,
         },
     }
-

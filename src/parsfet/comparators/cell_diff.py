@@ -1,22 +1,29 @@
-"""
-Cell Coverage Comparison
+"""Cell Coverage Comparison.
 
-Compare what cells exist in different libraries.
-This is useful for:
-- Understanding library completeness
-- Finding gaps when porting designs
-- Identifying unique cells
+This module provides tools to compare the cell content of two libraries.
+It identifies common cells, unique cells, and calculates similarity metrics
+like the Jaccard index. This is essential for:
+- Checking library completeness when porting designs.
+- Identifying technology-specific or custom cells.
+- Verifying if two libraries are compatible or equivalent.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ..models.liberty import LibertyLibrary
 
 
 @dataclass
 class CellDiffResult:
-    """Result of comparing cell coverage between two libraries"""
+    """Result of comparing cell coverage between two libraries.
+
+    Attributes:
+        library_a: Name of the first library.
+        library_b: Name of the second library.
+        only_in_a: Set of cell names present only in library A.
+        only_in_b: Set of cell names present only in library B.
+        common: Set of cell names present in both libraries.
+    """
 
     library_a: str
     library_b: str
@@ -27,11 +34,10 @@ class CellDiffResult:
 
     @property
     def jaccard_similarity(self) -> float:
-        """
-        Jaccard index: |A ∩ B| / |A ∪ B|
+        """Calculates the Jaccard similarity index.
 
-        1.0 = identical cell sets
-        0.0 = no overlap
+        J(A, B) = |A ∩ B| / |A ∪ B|
+        Values range from 0.0 (no overlap) to 1.0 (identical sets).
         """
         intersection = len(self.common)
         union = len(self.only_in_a) + len(self.only_in_b) + len(self.common)
@@ -39,18 +45,18 @@ class CellDiffResult:
 
     @property
     def coverage_a_in_b(self) -> float:
-        """What fraction of A's cells are also in B?"""
+        """Calculates the fraction of cells from library A that are also in B."""
         total_a = len(self.only_in_a) + len(self.common)
         return len(self.common) / total_a if total_a > 0 else 0.0
 
     @property
     def coverage_b_in_a(self) -> float:
-        """What fraction of B's cells are also in A?"""
+        """Calculates the fraction of cells from library B that are also in A."""
         total_b = len(self.only_in_b) + len(self.common)
         return len(self.common) / total_b if total_b > 0 else 0.0
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization"""
+        """Converts the result to a dictionary for JSON serialization."""
         return {
             "library_a": self.library_a,
             "library_b": self.library_b,
@@ -75,17 +81,16 @@ def compare_cell_coverage(
     lib_b: LibertyLibrary,
     normalize_names: bool = True,
 ) -> CellDiffResult:
-    """
-    Compare cell coverage between two libraries.
+    """Compares the cell sets of two libraries.
 
     Args:
-        lib_a: First library
-        lib_b: Second library
-        normalize_names: If True, normalize cell names for comparison
-                        (e.g., ignore prefixes like "sky130_fd_sc_hd__")
+        lib_a: The first Liberty library.
+        lib_b: The second Liberty library.
+        normalize_names: If True (default), removes foundry-specific prefixes and
+            suffix variations (e.g., Vt flavors) to compare core logical cell names.
 
     Returns:
-        CellDiffResult with sets of unique and common cells
+        A CellDiffResult object containing the comparison details.
     """
     if normalize_names:
         cells_a = {_normalize_cell_name(name): name for name in lib_a.cells.keys()}
@@ -113,15 +118,10 @@ def compare_cell_coverage(
 
 
 def _normalize_cell_name(name: str) -> str:
-    """
-    Normalize cell name for comparison across libraries.
+    """Normalizes a cell name for robust comparison.
 
-    Removes common prefixes and suffixes that vary between foundries.
-
-    Examples:
-        sky130_fd_sc_hd__inv_1 -> inv_1
-        INVD1BWP -> INVD1
-        INV_X1_LVT -> INV_X1
+    Strips known foundry prefixes and Vt suffixes to isolate the core cell function name.
+    e.g., 'sky130_fd_sc_hd__nand2_1' -> 'NAND2_1'.
     """
     # Remove common foundry prefixes
     prefixes = [
@@ -154,10 +154,18 @@ def find_equivalent_cells(
     lib_a: LibertyLibrary,
     lib_b: LibertyLibrary,
 ) -> list[tuple[str, float]]:
-    """
-    Find cells in lib_b that are equivalent to cell_name in lib_a.
+    """Finds cells in lib_b that are likely equivalent to a cell in lib_a.
 
-    Returns list of (cell_name, similarity_score) sorted by similarity.
+    Uses name normalization and functional heuristics to suggest matches.
+
+    Args:
+        cell_name: Name of the cell in lib_a to match.
+        lib_a: The source library.
+        lib_b: The target library to search.
+
+    Returns:
+        A list of tuples (target_cell_name, confidence_score), sorted by score.
+        Score ranges from 0.0 to 1.0.
     """
     if cell_name not in lib_a.cells:
         return []
@@ -184,7 +192,7 @@ def find_equivalent_cells(
 
 
 def _same_function_type(name_a: str, name_b: str) -> bool:
-    """Check if two cell names represent the same logical function type"""
+    """Checks if two cell names likely represent the same logical function."""
     function_types = [
         "INV",
         "BUF",
