@@ -1,7 +1,9 @@
-Pars-FET User Guide
-===================
+User Guide
+==========
 
-Pars-FET is a VLSI technology abstraction framework designed to simplify the analysis, comparison, and characterization of semiconductor technology files. It supports Liberty (.lib), LEF (.lef), and TechLEF formats.
+Pars-FET is a tool for looking inside semiconductor technology files. It helps you see what's actually in those ``.lib``, ``.lef``, and ``.techlef`` files without getting lost in the details.
+
+The problem with technology files is they tell you absolute numbers—picoseconds, microns, nanowatts. Those numbers change every time you switch process nodes. Pars-FET normalizes everything to the simplest component: the inverter. This lets you compare the *structure* of a technology, not just its speed limit.
 
 Installation
 ------------
@@ -13,68 +15,71 @@ Installation
 Basic Usage
 -----------
 
-Pars-FET provides a command-line interface (CLI) for common tasks.
+The CLI gives you quick answers to common questions about your libraries.
 
-Parsing a File
-^^^^^^^^^^^^^^
+See What You Have
+^^^^^^^^^^^^^^^^^
 
-To parse and summarize a technology file:
+Before you do anything else, you just want to know what you're dealing with. Is this a 7nm library or 180nm? How many cells? What are the layers?
 
 .. code-block:: bash
 
    parsfet parse path/to/library.lib
 
-This command detects the format (lib, lef, techlef) and prints a summary of the contents, such as cell counts, operating conditions, and layers.
+This reads the file and prints a summary. It doesn't guess; it tells you exactly what counts of cells, layers, and operating conditions are defined in the file.
 
-Normalization
-^^^^^^^^^^^^^
+Normalize (The "Inverter Standard")
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-To normalize a library to the standard inverter (INVD1) baseline:
+Absolute numbers are hard to compare. A "fast" NAND gate in 180nm is slow in 7nm. To see if a cell is *architecturally* good, you need to remove the process scaling.
 
 .. code-block:: bash
 
    parsfet normalize path/to/library.lib --output normalized.json
 
-This calculates relative metrics (area, delay, leakage) where the baseline inverter has a value of 1.0. This allows for process-node independent comparisons.
+This divides every metric (area, delay, leakage) by the corresponding metric of the standard inverter (INVD1).
+If a cell has a delay of 2.0, it means it's exactly twice as slow as an inverter. That fact remains true regardless of the process node.
 
-Comparing Libraries
-^^^^^^^^^^^^^^^^^^^
+Compare Two Libraries
+^^^^^^^^^^^^^^^^^^^^^
 
-To compare two libraries (e.g., to check for missing cells or compare performance):
+You have two libraries. Are they the same? Do they have the same cells? Is one missing the specialized flip-flops the other has?
 
 .. code-block:: bash
 
    parsfet compare lib_a.lib lib_b.lib
 
-This outputs the Jaccard similarity of the cell sets and compares the technological fingerprints.
+This checks the overlap. It tells you which cells are unique to A, unique to B, and which are shared. It uses the Jaccard similarity index to give you a single number representing how much they overlap.
 
 Fingerprinting
 ^^^^^^^^^^^^^^
 
-To generate a technological fingerprint:
+If you want to feed library data into a machine learning model, you can't just dump the ``.lib`` text. You need a vector—a list of numbers that describes the "shape" of the technology.
 
 .. code-block:: bash
 
    parsfet fingerprint path/to/library.lib
 
-A fingerprint is a compact vector representation of the library's characteristics, useful for machine learning and clustering.
+This creates a signature based on the statistical distribution of the normalized metrics. It turns the entire library into a compact vector that captures its essence (drive strength diversity, logic depth, etc.).
 
 Python API
 ----------
 
-You can also use Pars-FET as a Python library:
+If you need to build your own analysis tools, import the core modules directly:
 
 .. code-block:: python
 
    from parsfet.parsers.liberty import LibertyParser
    from parsfet.normalizers.invd1 import INVD1Normalizer
 
-   # Parse
+   # 1. Parse the raw file
    parser = LibertyParser()
    lib = parser.parse("my_tech.lib")
 
-   # Normalize
+   # 2. Create the normalized view
    normalizer = INVD1Normalizer(lib)
    summary = normalizer.get_summary()
 
+   # 3. Ask questions
    print(f"Baseline Cell: {summary['baseline_cell']}")
+   print(f"Average Area Ratio: {summary['area_ratio_stats']['mean']}")
