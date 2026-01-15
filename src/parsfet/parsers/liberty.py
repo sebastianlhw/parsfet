@@ -97,8 +97,8 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         pattern = r"""
             "(?:[^"\\]|\\.)*"         # Quoted string (with escapes)
             |'(?:[^'\\]|\\.)*'        # Single-quoted string
+            |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number (before identifier to catch negative numbers)
             |[a-zA-Z_][a-zA-Z0-9_\.\[\]]*  # Identifier (including array notation)
-            |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number
             |[{}();:,\\]              # Punctuation
         """
         tokens = re.findall(pattern, content, re.VERBOSE)
@@ -258,10 +258,15 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         # Check for number
         try:
             if "." in token or "e" in token.lower():
-                return float(self._consume())
+                # Try converting the token first without consuming
+                val = float(token)
+                self._consume()
+                return val
             # Check if it looks like a number
             if token.lstrip("-+").isdigit():
-                return int(self._consume())
+                val = int(token)
+                self._consume()
+                return val
         except (ValueError, AttributeError):
             pass
 
@@ -289,7 +294,15 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         # Parse capacitive load unit (can be complex)
         cap_unit = ast.get("capacitive_load_unit")
         if cap_unit:
-            library.capacitive_load_unit = self._parse_cap_unit(cap_unit)
+            # Handle group-like format: e.g. capacitive_load_unit(1.0, pf)
+            if isinstance(cap_unit, list) and len(cap_unit) > 0 and isinstance(cap_unit[0], dict):
+                qualifier = cap_unit[0].get("_qualifier", "")
+                if qualifier:
+                    library.capacitive_load_unit = self._parse_cap_unit(qualifier)
+                else:
+                    library.capacitive_load_unit = self._parse_cap_unit(cap_unit)
+            else:
+                library.capacitive_load_unit = self._parse_cap_unit(cap_unit)
 
         # Parse lookup table templates
         for template in ast.get("lu_table_template", []):
@@ -300,7 +313,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         # Parse cells
         for cell_ast in ast.get("cell", []):
             if isinstance(cell_ast, dict):
-                cell = self._build_cell(cell_ast)
+                cell = self._build_cell(cell_ast, library.lu_table_templates)
                 library.cells[cell.name] = cell
 
         # Store raw attributes for completeness
@@ -312,7 +325,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
 
         return library
 
-    def _build_cell(self, ast: dict[str, Any]) -> Cell:
+    def _build_cell(self, ast: dict[str, Any], templates: dict[str, Any] = None) -> Cell:
         """Build Cell from AST"""
         cell_name = ast.get("_qualifier", "unknown")
         if isinstance(cell_name, str):
@@ -339,13 +352,13 @@ class LibertyParser(BaseParser[LibertyLibrary]):
                 # Extract timing arcs from pin
                 for timing_ast in pin_ast.get("timing", []):
                     if isinstance(timing_ast, dict):
-                        arc = self._build_timing_arc(timing_ast)
+                        arc = self._build_timing_arc(timing_ast, templates)
                         cell.timing_arcs.append(arc)
 
                 # Extract power arcs
                 for power_ast in pin_ast.get("internal_power", []):
                     if isinstance(power_ast, dict):
-                        power_arc = self._build_power_arc(power_ast)
+                        power_arc = self._build_power_arc(power_ast, templates)
                         cell.power_arcs.append(power_arc)
 
         # Parse leakage power values
@@ -378,7 +391,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
             fall_capacitance=self._get_float(ast, "fall_capacitance"),
         )
 
-    def _build_timing_arc(self, ast: dict[str, Any]) -> TimingArc:
+    def _build_timing_arc(self, ast: dict[str, Any], templates: dict[str, Any] = None) -> TimingArc:
         """Build TimingArc from AST"""
         arc = TimingArc(
             related_pin=self._get_str(ast, "related_pin", ""),
@@ -387,26 +400,26 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         )
 
         # Parse lookup tables
-        arc.cell_rise = self._build_lut(ast.get("cell_rise"))
-        arc.cell_fall = self._build_lut(ast.get("cell_fall"))
-        arc.rise_transition = self._build_lut(ast.get("rise_transition"))
-        arc.fall_transition = self._build_lut(ast.get("fall_transition"))
-        arc.rise_constraint = self._build_lut(ast.get("rise_constraint"))
-        arc.fall_constraint = self._build_lut(ast.get("fall_constraint"))
+        arc.cell_rise = self._build_lut(ast.get("cell_rise"), templates)
+        arc.cell_fall = self._build_lut(ast.get("cell_fall"), templates)
+        arc.rise_transition = self._build_lut(ast.get("rise_transition"), templates)
+        arc.fall_transition = self._build_lut(ast.get("fall_transition"), templates)
+        arc.rise_constraint = self._build_lut(ast.get("rise_constraint"), templates)
+        arc.fall_constraint = self._build_lut(ast.get("fall_constraint"), templates)
 
         return arc
 
-    def _build_power_arc(self, ast: dict[str, Any]) -> PowerArc:
+    def _build_power_arc(self, ast: dict[str, Any], templates: dict[str, Any] = None) -> PowerArc:
         """Build PowerArc from AST"""
         arc = PowerArc(
             related_pin=self._get_str(ast, "related_pin"),
             when=self._get_str(ast, "when"),
         )
-        arc.rise_power = self._build_lut(ast.get("rise_power"))
-        arc.fall_power = self._build_lut(ast.get("fall_power"))
+        arc.rise_power = self._build_lut(ast.get("rise_power"), templates)
+        arc.fall_power = self._build_lut(ast.get("fall_power"), templates)
         return arc
 
-    def _build_lut(self, lut_list: Any) -> Optional[LookupTable]:
+    def _build_lut(self, lut_list: Any, templates: dict[str, Any] = None) -> Optional[LookupTable]:
         """Build LookupTable from AST"""
         if not lut_list:
             return None
@@ -424,9 +437,22 @@ class LibertyParser(BaseParser[LibertyLibrary]):
 
         lut = LookupTable()
 
+        # Check for template
+        template_name = lut_ast.get("_qualifier", "")
+        if isinstance(template_name, str):
+            template_name = template_name.strip("\"'")
+
+        template = templates.get(template_name) if templates else None
+
         # Parse index_1, index_2 - they may be stored as groups with qualifier
         idx1 = self._extract_lut_index(lut_ast.get("index_1"))
         idx2 = self._extract_lut_index(lut_ast.get("index_2"))
+
+        # If indices not in LUT, check template
+        if not idx1 and template:
+            idx1 = self._extract_lut_index(template.get("index_1"))
+        if not idx2 and template:
+            idx2 = self._extract_lut_index(template.get("index_2"))
 
         if idx1:
             lut.index_1 = idx1
@@ -578,8 +604,19 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         val = d.get(key)
         if val is None:
             return default
+
+        # Handle group format: e.g. technology(cmos) -> [{'_name': 'technology', '_qualifier': 'cmos'}]
+        if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict):
+             return val[0].get("_qualifier", default)
+
         if isinstance(val, str):
-            return val.strip("\"'")
+            # Clean up trailing semicolons if they got attached (due to tokenizer)
+            val = val.strip().rstrip(";")
+            val = val.strip("\"'")
+            if not val and default: # Fallback to default if empty string?
+                # No, if explicit empty string, return it. But here it might be parsing issue.
+                pass
+            return val
         return str(val)
 
     def _get_float(self, d: dict, key: str, default: float = None) -> Optional[float]:
@@ -602,6 +639,8 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         if isinstance(val, bool):
             return val
         if isinstance(val, str):
+            # Clean up trailing semicolons
+            val = val.strip().rstrip(";").strip("\"'")
             return val.lower() in ("true", "yes", "1")
         return bool(val)
 
