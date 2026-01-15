@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..models.liberty import Cell, LibertyLibrary
+from .classifier import classify_cell
 
 
 @dataclass
@@ -29,19 +30,21 @@ class NormalizedMetrics:
     All ratios are (cell_value / baseline_value), so:
     - ratio = 1.0 means same as baseline
     - ratio = 2.0 means 2x the baseline
+    
+    Delay is represented as linear model: D = D₀ + k × Load
+    - d0_ratio: intrinsic delay ratio (cell.D₀ / baseline.D₀)
+    - k_ratio: load slope ratio (cell.k / baseline.k)
     """
 
     cell_name: str
+    cell_type: str = "unknown"  # From classifier: inverter, buffer, nand, etc.
 
     # Core ratios
     area_ratio: float = 1.0  # cell_area / invd1_area
-    delay_ratio: float = 1.0  # cell_delay / invd1_delay
+    d0_ratio: float = 1.0    # cell.D₀ / invd1.D₀ (intrinsic delay ratio)
+    k_ratio: float = 1.0     # cell.k / invd1.k (load slope ratio)
     leakage_ratio: float = 1.0  # cell_leakage / invd1_leakage
     input_cap_ratio: float = 1.0  # input_cap / invd1_input_cap
-
-    # Linear delay model: D = D₀ + k × Load
-    intrinsic_delay_ns: float = 0.0  # D₀: zero-load delay
-    load_slope_ns_per_pf: float = 0.0  # k: delay per unit load
 
     # Additional metrics
     drive_strength: float = 1.0  # Relative drive strength
@@ -51,7 +54,8 @@ class NormalizedMetrics:
 
     # Raw values for reference (in canonical units: ns, pF)
     raw_area: float = 0.0
-    raw_delay: float = 0.0
+    raw_d0_ns: float = 0.0      # Intrinsic delay (zero-load)
+    raw_k_ns_per_pf: float = 0.0  # Load slope
     raw_leakage: float = 0.0
     raw_input_cap: float = 0.0
 
@@ -59,13 +63,15 @@ class NormalizedMetrics:
         """Convert to dictionary for JSON serialization"""
         return {
             "cell_name": self.cell_name,
+            "cell_type": self.cell_type,
             "area_ratio": self.area_ratio,
-            "delay_ratio": self.delay_ratio,
+            "d0_ratio": self.d0_ratio,
+            "k_ratio": self.k_ratio,
             "leakage_ratio": self.leakage_ratio,
             "input_cap_ratio": self.input_cap_ratio,
             "delay_model": {
-                "intrinsic_delay_ns": self.intrinsic_delay_ns,
-                "load_slope_ns_per_pf": self.load_slope_ns_per_pf,
+                "d0_ns": self.raw_d0_ns,
+                "k_ns_per_pf": self.raw_k_ns_per_pf,
             },
             "drive_strength": self.drive_strength,
             "num_inputs": self.num_inputs,
@@ -73,17 +79,23 @@ class NormalizedMetrics:
             "is_sequential": self.is_sequential,
             "raw": {
                 "area_um2": self.raw_area,
-                "delay_ns": self.raw_delay,
+                "d0_ns": self.raw_d0_ns,
+                "k_ns_per_pf": self.raw_k_ns_per_pf,
                 "leakage": self.raw_leakage,
                 "input_cap_pf": self.raw_input_cap,
             },
         }
 
     def to_feature_vector(self) -> list[float]:
-        """Convert to feature vector for ML"""
+        """Convert to feature vector for ML
+        
+        Features: [area_ratio, d0_ratio, k_ratio, leakage_ratio, 
+                   input_cap_ratio, num_inputs, num_outputs, is_sequential]
+        """
         return [
             self.area_ratio,
-            self.delay_ratio,
+            self.d0_ratio,
+            self.k_ratio,
             self.leakage_ratio,
             self.input_cap_ratio,
             float(self.num_inputs),
@@ -94,11 +106,15 @@ class NormalizedMetrics:
 
 @dataclass
 class BaselineMetrics:
-    """Extracted metrics from the baseline cell"""
+    """Extracted metrics from the baseline cell
+    
+    Includes D₀+k linear delay model parameters.
+    """
 
     cell_name: str
     area: float
-    delay: float  # Delay at FO4 operating point
+    d0: float  # D₀: intrinsic delay (zero-load) in ns
+    k: float   # k: load slope in ns/pF
     leakage: float
     input_cap: float  # Total input capacitance
     # FO4 operating point
@@ -160,22 +176,36 @@ class INVD1Normalizer:
         self.baseline = self._extract_baseline_metrics(self.baseline_cell)
 
     def _extract_baseline_metrics(self, cell: Cell) -> BaselineMetrics:
-        """Extract key metrics from baseline cell at FO4 operating point.
+        """Extract key metrics from baseline cell using D₀+k linear model.
 
         All values are converted to canonical units:
         - Time: nanoseconds (ns)
         - Capacitance: picofarads (pF)
+        
+        The linear delay model D = D₀ + k × Load is extracted using
+        least-squares fitting on the cell's timing LUT.
         """
         # Area (typically in um², no conversion needed)
         area = cell.area if cell.area > 0 else 1.0
 
-        # Delay at FO4 operating point, converted to ns
-        delay = cell.delay_at(self.fo4_slew, self.fo4_load)
-        if delay <= 0:
-            delay = cell.representative_delay
-        if delay <= 0:
-            delay = 0.01
-        delay = self.unit_normalizer.normalize_time(delay)
+        # Extract linear delay model: D = D₀ + k × Load
+        # Use FO4 slew as the operating point for model extraction
+        d0_raw, k_raw = cell.linear_delay_model(self.fo4_slew)
+        
+        # Convert to canonical units
+        if d0_raw <= 0:
+            # Fallback: use FO4 delay as D₀ estimate (conservative)
+            d0_raw = cell.delay_at(self.fo4_slew, self.fo4_load)
+            if d0_raw <= 0:
+                d0_raw = cell.representative_delay
+            if d0_raw <= 0:
+                d0_raw = 0.01  # 10ps default
+            k_raw = 0.0  # Unknown slope
+        
+        d0 = self.unit_normalizer.normalize_time(d0_raw)
+        # k is time/capacitance, so normalize both dimensions
+        # k_canonical = k_raw * (time_scale / cap_scale)
+        k = self.unit_normalizer.normalize_time(k_raw) / self.unit_normalizer.normalize_capacitance(1.0) if k_raw > 0 else 0.0
 
         # Leakage power (no conversion for now)
         leakage = cell.cell_leakage_power if cell.cell_leakage_power else 1.0
@@ -193,7 +223,8 @@ class INVD1Normalizer:
         return BaselineMetrics(
             cell_name=cell.name,
             area=area,
-            delay=delay,
+            d0=d0,
+            k=k,
             leakage=leakage,
             input_cap=input_cap,
             fo4_slew=fo4_slew_ns,
@@ -202,7 +233,7 @@ class INVD1Normalizer:
 
     def normalize(self, cell: Cell) -> NormalizedMetrics:
         """
-        Normalize a single cell to baseline.
+        Normalize a single cell to baseline using D₀+k linear delay model.
 
         All raw values are converted to canonical units (ns, pF) for comparison.
 
@@ -210,17 +241,30 @@ class INVD1Normalizer:
             cell: Cell to normalize
 
         Returns:
-            NormalizedMetrics with all ratios computed
+            NormalizedMetrics with D₀ ratio, k ratio, and cell type
         """
+        # Classify cell by logic function
+        cell_type = classify_cell(cell)
+        
         # Extract raw values and convert to canonical units
         raw_area = cell.area if cell.area > 0 else 0.0
 
-        # Get delay at FO4 operating point (with fallback), convert to ns
-        raw_delay = cell.delay_at(self.fo4_slew, self.fo4_load)
-        if raw_delay <= 0:
-            raw_delay = cell.representative_delay
-        if raw_delay > 0:
-            raw_delay = self.unit_normalizer.normalize_time(raw_delay)
+        # Extract linear delay model: D = D₀ + k × Load
+        d0_raw, k_raw = cell.linear_delay_model(self.fo4_slew)
+        
+        # Convert to canonical units
+        if d0_raw <= 0:
+            # Fallback: use delay at FO4 as D₀ estimate
+            d0_raw = cell.delay_at(self.fo4_slew, self.fo4_load)
+            if d0_raw <= 0:
+                d0_raw = cell.representative_delay
+            k_raw = 0.0
+        
+        raw_d0_ns = self.unit_normalizer.normalize_time(d0_raw) if d0_raw > 0 else 0.0
+        raw_k_ns_per_pf = (
+            self.unit_normalizer.normalize_time(k_raw) / 
+            self.unit_normalizer.normalize_capacitance(1.0)
+        ) if k_raw > 0 else 0.0
 
         raw_leakage = cell.cell_leakage_power if cell.cell_leakage_power else 0.0
 
@@ -229,11 +273,10 @@ class INVD1Normalizer:
         if raw_input_cap > 0:
             raw_input_cap = self.unit_normalizer.normalize_capacitance(raw_input_cap)
 
-        # Compute ratios (both are now in canonical units, so ratio is unchanged)
+        # Compute ratios (both are now in canonical units)
         area_ratio = raw_area / self.baseline.area if self.baseline.area > 0 else 0.0
-        delay_ratio = (
-            raw_delay / self.baseline.delay if self.baseline.delay > 0 and raw_delay > 0 else 1.0
-        )
+        d0_ratio = raw_d0_ns / self.baseline.d0 if self.baseline.d0 > 0 and raw_d0_ns > 0 else 1.0
+        k_ratio = raw_k_ns_per_pf / self.baseline.k if self.baseline.k > 0 and raw_k_ns_per_pf > 0 else 1.0
         leakage_ratio = raw_leakage / self.baseline.leakage if self.baseline.leakage > 0 else 0.0
         input_cap_ratio = (
             raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0
@@ -244,8 +287,10 @@ class INVD1Normalizer:
 
         return NormalizedMetrics(
             cell_name=cell.name,
+            cell_type=cell_type,
             area_ratio=area_ratio,
-            delay_ratio=delay_ratio,
+            d0_ratio=d0_ratio,
+            k_ratio=k_ratio,
             leakage_ratio=leakage_ratio,
             input_cap_ratio=input_cap_ratio,
             drive_strength=drive_strength,
@@ -253,7 +298,8 @@ class INVD1Normalizer:
             num_outputs=len(cell.output_pins),
             is_sequential=cell.is_sequential,
             raw_area=raw_area,
-            raw_delay=raw_delay,
+            raw_d0_ns=raw_d0_ns,
+            raw_k_ns_per_pf=raw_k_ns_per_pf,
             raw_leakage=raw_leakage,
             raw_input_cap=raw_input_cap,
         )
@@ -280,8 +326,14 @@ class INVD1Normalizer:
             return {"error": "No cells to summarize"}
 
         areas = [m.area_ratio for m in metrics.values() if m.area_ratio > 0]
-        delays = [m.delay_ratio for m in metrics.values() if m.delay_ratio > 0]
+        d0s = [m.d0_ratio for m in metrics.values() if m.d0_ratio > 0]
+        ks = [m.k_ratio for m in metrics.values() if m.k_ratio > 0]
         leakages = [m.leakage_ratio for m in metrics.values() if m.leakage_ratio > 0]
+        
+        # Cell type distribution
+        type_counts: dict[str, int] = {}
+        for m in metrics.values():
+            type_counts[m.cell_type] = type_counts.get(m.cell_type, 0) + 1
 
         def stats(values: list[float]) -> dict:
             if not values:
@@ -298,12 +350,15 @@ class INVD1Normalizer:
             "library_name": self.library.name,
             "baseline_cell": self.baseline.cell_name,
             "total_cells": len(self.library.cells),
+            "cell_type_counts": type_counts,
             "area_ratio_stats": stats(areas),
-            "delay_ratio_stats": stats(delays),
+            "d0_ratio_stats": stats(d0s),
+            "k_ratio_stats": stats(ks),
             "leakage_ratio_stats": stats(leakages),
             "baseline_raw": {
                 "area": self.baseline.area,
-                "delay": self.baseline.delay,
+                "d0_ns": self.baseline.d0,
+                "k_ns_per_pf": self.baseline.k,
                 "leakage": self.baseline.leakage,
                 "input_cap": self.baseline.input_cap,
             },
@@ -334,7 +389,8 @@ class INVD1Normalizer:
             "baseline": {
                 "cell": self.baseline.cell_name,
                 "area_um2": self.baseline.area,
-                "delay_ns": self.baseline.delay,
+                "d0_ns": self.baseline.d0,
+                "k_ns_per_pf": self.baseline.k,
                 "leakage": self.baseline.leakage,
                 "input_cap_pf": self.baseline.input_cap,
             },

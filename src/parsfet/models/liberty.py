@@ -449,7 +449,7 @@ class LibertyLibrary(BaseModel):
             if name in self.cells:
                 return self.cells[name]
 
-        # Fallback: find smallest inverter by area
+        # Fallback: find smallest INV by name pattern (fast path)
         inverters = [
             (name, cell)
             for name, cell in self.cells.items()
@@ -457,6 +457,18 @@ class LibertyLibrary(BaseModel):
         ]
         if inverters:
             return min(inverters, key=lambda x: x[1].area)[1]
+
+        # Final fallback: use classifier to find inverters by logic function
+        try:
+            from ..normalizers.classifier import classify_cell
+            classified_inverters = [
+                cell for cell in self.cells.values()
+                if classify_cell(cell) == "inverter" and cell.area > 0
+            ]
+            if classified_inverters:
+                return min(classified_inverters, key=lambda c: c.area)
+        except ImportError:
+            pass  # Classifier not available
 
         return None
 

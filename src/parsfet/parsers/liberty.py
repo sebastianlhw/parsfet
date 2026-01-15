@@ -436,7 +436,25 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         # Parse values - may be stored as groups with qualifier
         values = self._extract_lut_values(lut_ast.get("values"))
         if values:
-            lut.values = values
+            # Check if values need reshaping: if we have both indices and
+            # values is a single flattened row, reshape to 2D
+            if idx1 and idx2 and len(values) == 1:
+                flat_values = values[0]
+                expected_size = len(idx1) * len(idx2)
+                if len(flat_values) == expected_size:
+                    # Reshape: values are stored row-major (index_1 is outer, index_2 is inner)
+                    # Each row corresponds to one slew value (index_1)
+                    # Each column corresponds to one load value (index_2)
+                    reshaped = []
+                    for i in range(len(idx1)):
+                        row_start = i * len(idx2)
+                        row_end = row_start + len(idx2)
+                        reshaped.append(flat_values[row_start:row_end])
+                    lut.values = reshaped
+                else:
+                    lut.values = values
+            else:
+                lut.values = values
 
         return lut
 

@@ -30,16 +30,19 @@ class TechnologyFingerprint:
     # Baseline cell info
     baseline_cell: str = ""
     baseline_area: float = 0.0
-    baseline_delay: float = 0.0
+    baseline_d0: float = 0.0  # Intrinsic delay (D₀)
+    baseline_k: float = 0.0   # Load slope (k)
     baseline_leakage: float = 0.0
 
     # Statistical summaries of normalized metrics
     mean_area_ratio: float = 0.0
-    mean_delay_ratio: float = 0.0
+    mean_d0_ratio: float = 0.0  # Intrinsic delay ratio
+    mean_k_ratio: float = 0.0   # Load slope ratio
     mean_leakage_ratio: float = 0.0
 
     std_area_ratio: float = 0.0
-    std_delay_ratio: float = 0.0
+    std_d0_ratio: float = 0.0
+    std_k_ratio: float = 0.0
     std_leakage_ratio: float = 0.0
 
     # Cell count metrics
@@ -76,10 +79,12 @@ class TechnologyFingerprint:
         """
         return [
             self.mean_area_ratio,
-            self.mean_delay_ratio,
+            self.mean_d0_ratio,
+            self.mean_k_ratio,
             self.mean_leakage_ratio,
             self.std_area_ratio,
-            self.std_delay_ratio,
+            self.std_d0_ratio,
+            self.std_k_ratio,
             self.std_leakage_ratio,
             float(self.total_cells) / 1000.0,  # Normalize cell count
             float(self.combinational_cells) / max(1, self.total_cells),
@@ -97,7 +102,8 @@ class TechnologyFingerprint:
             "baseline": {
                 "cell": self.baseline_cell,
                 "area": self.baseline_area,
-                "delay": self.baseline_delay,
+                "d0_ns": self.baseline_d0,
+                "k_ns_per_pf": self.baseline_k,
                 "leakage": self.baseline_leakage,
             },
             "normalized_stats": {
@@ -105,9 +111,13 @@ class TechnologyFingerprint:
                     "mean": self.mean_area_ratio,
                     "std": self.std_area_ratio,
                 },
-                "delay": {
-                    "mean": self.mean_delay_ratio,
-                    "std": self.std_delay_ratio,
+                "d0": {
+                    "mean": self.mean_d0_ratio,
+                    "std": self.std_d0_ratio,
+                },
+                "k": {
+                    "mean": self.mean_k_ratio,
+                    "std": self.std_k_ratio,
                 },
                 "leakage": {
                     "mean": self.mean_leakage_ratio,
@@ -165,12 +175,14 @@ def create_fingerprint(library: LibertyLibrary) -> TechnologyFingerprint:
     # Baseline info
     fp.baseline_cell = normalizer.baseline.cell_name
     fp.baseline_area = normalizer.baseline.area
-    fp.baseline_delay = normalizer.baseline.delay
+    fp.baseline_d0 = normalizer.baseline.d0
+    fp.baseline_k = normalizer.baseline.k
     fp.baseline_leakage = normalizer.baseline.leakage
 
     # Compute statistics
     areas = [m.area_ratio for m in metrics.values() if m.area_ratio > 0]
-    delays = [m.delay_ratio for m in metrics.values() if m.delay_ratio > 0]
+    d0s = [m.d0_ratio for m in metrics.values() if m.d0_ratio > 0]
+    ks = [m.k_ratio for m in metrics.values() if m.k_ratio > 0]
     leakages = [m.leakage_ratio for m in metrics.values() if m.leakage_ratio > 0]
 
     if areas:
@@ -179,9 +191,13 @@ def create_fingerprint(library: LibertyLibrary) -> TechnologyFingerprint:
         fp.min_drive_area = min(areas)
         fp.max_drive_area = max(areas)
 
-    if delays:
-        fp.mean_delay_ratio = statistics.mean(delays)
-        fp.std_delay_ratio = statistics.stdev(delays) if len(delays) > 1 else 0.0
+    if d0s:
+        fp.mean_d0_ratio = statistics.mean(d0s)
+        fp.std_d0_ratio = statistics.stdev(d0s) if len(d0s) > 1 else 0.0
+
+    if ks:
+        fp.mean_k_ratio = statistics.mean(ks)
+        fp.std_k_ratio = statistics.stdev(ks) if len(ks) > 1 else 0.0
 
     if leakages:
         fp.mean_leakage_ratio = statistics.mean(leakages)
@@ -279,10 +295,12 @@ def compare_fingerprints(fp_a: TechnologyFingerprint, fp_b: TechnologyFingerprin
         },
         "comparison": {
             "area_ratio_diff": fp_a.mean_area_ratio - fp_b.mean_area_ratio,
-            "delay_ratio_diff": fp_a.mean_delay_ratio - fp_b.mean_delay_ratio,
+            "d0_ratio_diff": fp_a.mean_d0_ratio - fp_b.mean_d0_ratio,
+            "k_ratio_diff": fp_a.mean_k_ratio - fp_b.mean_k_ratio,
             "cell_count_diff": fp_a.total_cells - fp_b.total_cells,
-            "baseline_delay_ratio": fp_a.baseline_delay / fp_b.baseline_delay
-            if fp_b.baseline_delay > 0
+            "baseline_d0_ratio": fp_a.baseline_d0 / fp_b.baseline_d0
+            if fp_b.baseline_d0 > 0
             else 0,
         },
     }
+
