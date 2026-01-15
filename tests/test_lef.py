@@ -116,3 +116,71 @@ def test_parse_file(sample_lef_file):
     lib = parser.parse(sample_lef_file)
     assert lib.units_database == 1000
     assert "M1" in lib.layers
+
+
+# --- New tests for helper methods and physical dataclasses ---
+
+def test_macro_pin_layers_used(sample_lef_content):
+    """Test MacroPin.layers_used property."""
+    parser = LEFParser()
+    lib = parser.parse_string(sample_lef_content)
+    
+    macro = lib.macros["INV_X1"]
+    pin_a = macro.pins["A"]
+    
+    # Pin A uses M1 layer
+    assert pin_a.layers_used == ["M1"]
+
+
+def test_metal_layer_min_size(sample_lef_content):
+    """Test MetalLayer.min_size property."""
+    parser = LEFParser()
+    lib = parser.parse_string(sample_lef_content)
+    
+    m1 = lib.layers["M1"]
+    # min_width not set, should fallback to width
+    assert m1.min_size == 0.1  # width is 0.1
+
+
+def test_cell_physical_from_macro(sample_lef_content):
+    """Test CellPhysical.from_macro factory method."""
+    from parsfet.models.physical import CellPhysical
+    
+    parser = LEFParser()
+    lib = parser.parse_string(sample_lef_content)
+    
+    macro = lib.macros["INV_X1"]
+    cell = CellPhysical.from_macro(macro)
+    
+    assert cell.name == "INV_X1"
+    assert cell.width == 1.0
+    assert cell.height == 2.0
+    assert cell.area == 2.0
+    
+    # Check pins
+    assert "A" in cell.pins
+    assert "Y" in cell.pins
+    assert cell.pins["A"].direction == "input"
+    assert cell.pins["Y"].direction == "output"
+
+
+def test_tech_info_from_tech_lef(sample_lef_content):
+    """Test TechInfo.from_tech_lef factory method."""
+    from parsfet.models.physical import TechInfo
+    
+    parser = TechLEFParser()
+    tech = parser.parse_string(sample_lef_content)
+    
+    info = TechInfo.from_tech_lef(tech)
+    
+    assert info.units_database == 1000
+    assert info.manufacturing_grid == 0.005
+    assert "M1" in info.layers
+    assert "M2" in info.layers
+    
+    # Check layer info
+    m1 = info.layers["M1"]
+    assert m1.layer_type == "routing"
+    assert m1.direction == "horizontal"
+    assert m1.min_size == 0.1  # Falls back to width
+

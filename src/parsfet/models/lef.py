@@ -76,6 +76,11 @@ class MetalLayer(BaseModel):
 
     model_config = {"extra": "allow"}
 
+    @property
+    def min_size(self) -> float | None:
+        """Returns minimum dimension (min_width or width as fallback)."""
+        return self.min_width if self.min_width is not None else self.width
+
 
 class Via(BaseModel):
     """Represents a via definition connecting two layers.
@@ -187,6 +192,11 @@ class MacroPin(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "allow"}
+
+    @property
+    def layers_used(self) -> list[str]:
+        """Returns list of unique layer names used by this pin's ports."""
+        return list({port.layer for port in self.ports})
 
 
 class Macro(BaseModel):

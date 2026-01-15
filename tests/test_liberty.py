@@ -157,9 +157,10 @@ def test_linear_model_fit():
         ]
     )
 
-    d0, k = lut.fit_linear_model(0.1)
+    d0, k, r_squared = lut.fit_linear_model(0.1)
     assert pytest.approx(d0) == 0.1
     assert pytest.approx(k) == 0.5
+    assert pytest.approx(r_squared) == 1.0  # Perfect linear fit
 
 def test_missing_baseline_cell(sample_liberty_content):
     # Rename INV_X1 to OTHER_X1.

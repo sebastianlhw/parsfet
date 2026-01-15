@@ -201,6 +201,8 @@ def normalize(
     lib_file: Path = typer.Argument(..., help="Path to Liberty file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
+    lef: Optional[list[Path]] = typer.Option(None, "--lef", "-l", help="LEF file(s) for physical data"),
+    tech_lef: Optional[Path] = typer.Option(None, "--tech-lef", "-t", help="TechLEF file for technology rules"),
 ):
     """Normalizes library metrics to the INVD1 baseline.
 
@@ -208,54 +210,126 @@ def normalize(
     normalized to the baseline inverter (typically INVD1). This allows for technology-agnostic
     comparisons between different libraries or process nodes.
 
+    Optionally, LEF and TechLEF files can be provided to include physical data (cell dimensions,
+    pin layers, technology rules) in the JSON output.
+
     Args:
         lib_file: Path to the Liberty (.lib) file.
         output: Optional. Path to save the normalized data as a JSON file.
         baseline: Optional. Name of the baseline cell to use. If not provided,
             the tool attempts to automatically detect the standard inverter.
+        lef: Optional. One or more LEF files containing cell physical data.
+        tech_lef: Optional. TechLEF file containing technology layer rules.
 
     Raises:
         typer.Exit: If the file is not found or normalization fails.
+
+    Examples:
+        # Basic normalization (Liberty only)
+        $ parsfet normalize my_lib.lib --output normalized.json
+
+        # With LEF and TechLEF for combined physical + timing data
+        $ parsfet normalize my_lib.lib --lef cells.lef --tech-lef tech.lef -o combined.json
     """
     if not lib_file.exists():
         console.print(f"[red]Error:[/red] File not found: {lib_file}")
         raise typer.Exit(1)
 
-    from .normalizers.invd1 import INVD1Normalizer
-    from .parsers.liberty import LibertyParser
+    # If LEF/TechLEF provided, use Dataset API for combined export
+    if lef or tech_lef:
+        from .data import Dataset
 
-    parser = LibertyParser()
-    lib = parser.parse(lib_file)
+        ds = Dataset()
+        ds.load_files([lib_file])
 
-    try:
-        normalizer = INVD1Normalizer(lib, baseline_name=baseline)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        if lef:
+            for lef_path in lef:
+                if not lef_path.exists():
+                    console.print(f"[red]Error:[/red] LEF file not found: {lef_path}")
+                    raise typer.Exit(1)
+            ds.load_lef(lef)
+            console.print(f"[blue]Loaded LEF:[/blue] {len(lef)} file(s)")
 
-    summary = normalizer.get_summary()
+        if tech_lef:
+            if not tech_lef.exists():
+                console.print(f"[red]Error:[/red] TechLEF file not found: {tech_lef}")
+                raise typer.Exit(1)
+            ds.load_tech_lef(tech_lef)
+            console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
 
-    console.print(
-        Panel.fit(
-            f"[bold green]Library:[/] {lib.name}\n"
-            f"[bold]Baseline Cell:[/] {summary['baseline_cell']}\n"
-            f"[bold]Total Cells:[/] {summary['total_cells']}\n\n"
-            f"[bold]Area Ratios:[/]\n"
-            f"  Mean: {summary['area_ratio_stats'].get('mean', 0):.2f}\n"
-            f"  Min: {summary['area_ratio_stats'].get('min', 0):.2f}\n"
-            f"  Max: {summary['area_ratio_stats'].get('max', 0):.2f}\n\n"
-            f"[bold]Delay Ratios:[/]\n"
-            f"  Mean: {summary['delay_ratio_stats'].get('mean', 0):.2f}\n"
-            f"  Min: {summary['delay_ratio_stats'].get('min', 0):.2f}\n"
-            f"  Max: {summary['delay_ratio_stats'].get('max', 0):.2f}",
-            title="Normalization Summary",
+        entry = ds.entries[0]
+        if not entry.normalizer:
+            console.print("[red]Error:[/red] No baseline inverter found in library")
+            raise typer.Exit(1)
+
+        summary = entry.normalizer.get_summary()
+
+        # Display summary
+        phys_info = ""
+        if entry.lef_cells:
+            phys_info += f"\n[bold]LEF Cells Matched:[/] {len(entry.lef_cells)}"
+        if entry.tech_info:
+            phys_info += f"\n[bold]Metal Stack:[/] {entry.tech_info.metal_stack_height} layers"
+
+        console.print(
+            Panel.fit(
+                f"[bold green]Library:[/] {entry.library.name}\n"
+                f"[bold]Baseline Cell:[/] {summary['baseline_cell']}\n"
+                f"[bold]Total Cells:[/] {summary['total_cells']}\n\n"
+                f"[bold]Area Ratios:[/]\n"
+                f"  Mean: {summary['area_ratio_stats'].get('mean', 0):.2f}\n"
+                f"  Min: {summary['area_ratio_stats'].get('min', 0):.2f}\n"
+                f"  Max: {summary['area_ratio_stats'].get('max', 0):.2f}\n\n"
+                f"[bold]D0 Ratios:[/]\n"
+                f"  Mean: {summary['d0_ratio_stats'].get('mean', 0):.2f}\n"
+                f"  Min: {summary['d0_ratio_stats'].get('min', 0):.2f}\n"
+                f"  Max: {summary['d0_ratio_stats'].get('max', 0):.2f}"
+                + phys_info,
+                title="Normalization Summary",
+            )
         )
-    )
 
-    if output:
-        data = normalizer.export_to_json()
-        output.write_text(json.dumps(data, indent=2, default=str))
-        console.print(f"[green]Saved to:[/green] {output}")
+        if output:
+            ds.save_json(output)
+            console.print(f"[green]Saved combined data to:[/green] {output}")
+
+    else:
+        # Original Liberty-only flow
+        from .normalizers.invd1 import INVD1Normalizer
+        from .parsers.liberty import LibertyParser
+
+        parser = LibertyParser()
+        lib = parser.parse(lib_file)
+
+        try:
+            normalizer = INVD1Normalizer(lib, baseline_name=baseline)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
+
+        summary = normalizer.get_summary()
+
+        console.print(
+            Panel.fit(
+                f"[bold green]Library:[/] {lib.name}\n"
+                f"[bold]Baseline Cell:[/] {summary['baseline_cell']}\n"
+                f"[bold]Total Cells:[/] {summary['total_cells']}\n\n"
+                f"[bold]Area Ratios:[/]\n"
+                f"  Mean: {summary['area_ratio_stats'].get('mean', 0):.2f}\n"
+                f"  Min: {summary['area_ratio_stats'].get('min', 0):.2f}\n"
+                f"  Max: {summary['area_ratio_stats'].get('max', 0):.2f}\n\n"
+                f"[bold]D0 Ratios:[/]\n"
+                f"  Mean: {summary['d0_ratio_stats'].get('mean', 0):.2f}\n"
+                f"  Min: {summary['d0_ratio_stats'].get('min', 0):.2f}\n"
+                f"  Max: {summary['d0_ratio_stats'].get('max', 0):.2f}",
+                title="Normalization Summary",
+            )
+        )
+
+        if output:
+            data = normalizer.export_to_json()
+            output.write_text(json.dumps(data, indent=2, default=str))
+            console.print(f"[green]Saved to:[/green] {output}")
 
 
 @app.command()

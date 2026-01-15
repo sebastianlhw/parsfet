@@ -100,3 +100,91 @@ def test_feature_columns_count():
 
     m = NormalizedMetrics(cell_name="test")
     assert len(m.to_feature_vector()) == len(FEATURE_COLUMNS)
+
+
+# --- Integration tests for LEF/TechLEF loading ---
+
+def test_load_tech_lef(sample_liberty_file, sample_lef_file):
+    """Test loading TechLEF adds tech_info to entries."""
+    ds = Dataset()
+    ds.load_files([sample_liberty_file])
+    ds.load_tech_lef(sample_lef_file)  # Use LEF file as TechLEF (has layers)
+
+    assert ds.entries[0].tech_info is not None
+    assert ds.entries[0].tech_info.units_database == 1000
+    assert "M1" in ds.entries[0].tech_info.layers
+
+
+def test_to_dataframe_lef_columns(sample_liberty_file, sample_lef_file):
+    """Test that LEF columns are present after loading LEF."""
+    ds = Dataset()
+    ds.load_files([sample_liberty_file])
+    ds.load_lef([sample_lef_file])  # Sample LEF has INV_X1 macro
+    ds.load_tech_lef(sample_lef_file)
+
+    df = ds.to_dataframe()
+
+    # LEF columns should be present
+    assert "lef_width" in df.columns
+    assert "lef_height" in df.columns
+    assert "lef_area" in df.columns
+    assert "pin_layers_json" in df.columns
+    assert "metal_stack_height" in df.columns
+
+    # INV_X1 should have LEF data matched
+    inv_row = df[df["cell"] == "INV_X1"]
+    if not inv_row.empty:
+        assert inv_row["lef_width"].iloc[0] == 1.0
+        assert inv_row["lef_height"].iloc[0] == 2.0
+
+
+def test_load_lef_not_found():
+    """Test that FileNotFoundError is raised for missing LEF file."""
+    ds = Dataset()
+    with pytest.raises(FileNotFoundError):
+        ds.load_lef(["nonexistent.lef"])
+
+
+def test_load_tech_lef_not_found():
+    """Test that FileNotFoundError is raised for missing TechLEF file."""
+    ds = Dataset()
+    with pytest.raises(FileNotFoundError):
+        ds.load_tech_lef("nonexistent.tlef")
+
+
+def test_export_to_json(sample_liberty_file, sample_lef_file):
+    """Test export_to_json produces proper structure."""
+    ds = Dataset()
+    ds.load_files([sample_liberty_file])
+    ds.load_lef([sample_lef_file])
+    ds.load_tech_lef(sample_lef_file)
+
+    data = ds.export_to_json()
+
+    # Check basic structure
+    assert "library" in data
+    assert "cells" in data
+    assert "technology" in data
+
+    # Check technology section
+    assert "metal_stack_height" in data["technology"]
+    assert "layers" in data["technology"]
+
+    # Check cell physical data with pin use type
+    if "INV_X1" in data["cells"]:
+        cell = data["cells"]["INV_X1"]
+        assert "physical" in cell
+        assert "pins" in cell["physical"]
+        for pin_name, pin in cell["physical"]["pins"].items():
+            assert "direction" in pin
+            assert "use" in pin  # New: pin use type
+            assert "layers" in pin
+
+
+def test_export_to_json_empty():
+    """Test export_to_json on empty dataset."""
+    ds = Dataset()
+    data = ds.export_to_json()
+    assert "error" in data
+
+

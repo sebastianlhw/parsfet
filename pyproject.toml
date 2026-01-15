@@ -59,7 +59,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--cov=parsfet --cov-report=term-missing"
+addopts = "--cov=parsfet"
 testpaths = ["tests"]
 
 [tool.ruff]

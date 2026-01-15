@@ -45,6 +45,24 @@ This extracts a linear delay model (:math:`D = D_0 + k \cdot C_{load}`) for ever
 
 It also automatically classifies logic gates (NAND, NOR, etc.) based on their boolean function. If a NAND gate has a ``d0_ratio`` of 1.5, it means it's 50% slower internally than an inverter, regardless of the process node.
 
+Combined Physical + Timing Data
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Often you need both timing data (from Liberty) and physical layout data (from LEF) together. Pars-FET can combine these into a single JSON output:
+
+.. code-block:: bash
+
+   parsfet normalize path/to/library.lib \
+     --lef path/to/cells.lef \
+     --tech-lef path/to/technology.lef \
+     --output combined.json
+
+This adds to each cell:
+
+*   **physical.width_um / height_um**: Cell dimensions from LEF
+*   **physical.pins**: For each pin: direction, use type (signal/power/ground/clock), and metal layers used
+*   **technology.layers**: Metal layer rules (min size, direction, pitch, spacing)
+
 Compare Two Libraries
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -88,3 +106,41 @@ If you need to build your own analysis tools, import the core modules directly:
    # 3. Ask questions
    print(f"Baseline Cell: {summary['baseline_cell']}")
    print(f"Average Area Ratio: {summary['area_ratio_stats']['mean']}")
+
+Dataset API (Combined LEF/TechLEF)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For combined physical + timing analysis, use the ``Dataset`` class:
+
+.. code-block:: python
+
+   from parsfet.data import Dataset
+
+   # Load Liberty with LEF/TechLEF
+   ds = Dataset()
+   ds.load_files(["library.lib"])
+   ds.load_lef(["cells.lef"])
+   ds.load_tech_lef("tech.lef")
+
+   # Export combined JSON
+   ds.save_json("combined_output.json")
+
+   # Or work with DataFrames
+   df = ds.to_dataframe()
+   print(df[["cell", "area_ratio", "lef_width", "lef_height"]].head())
+
+   # Access physical data directly
+   entry = ds.entries[0]
+   for cell_name, lef_cell in entry.lef_cells.items():
+       print(f"{cell_name}: {lef_cell.width} x {lef_cell.height} um")
+       for pin_name, pin in lef_cell.pins.items():
+           print(f"  {pin_name}: {pin.direction}, use={pin.use}, layers={pin.layers}")
+
+The JSON export includes technology layer info:
+
+.. code-block:: python
+
+   data = ds.export_to_json()
+   for layer_name, layer in data["technology"]["layers"].items():
+       print(f"{layer_name}: min_size={layer['min_size_um']} um")
+

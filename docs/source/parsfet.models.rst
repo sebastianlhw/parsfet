@@ -28,6 +28,14 @@ parsfet.models.liberty module
    :show-inheritance:
    :undoc-members:
 
+parsfet.models.physical module
+------------------------------
+
+.. automodule:: parsfet.models.physical
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 

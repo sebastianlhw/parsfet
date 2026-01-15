@@ -23,6 +23,14 @@ parsfet.cli module
    :show-inheritance:
    :undoc-members:
 
+parsfet.data module
+-------------------
+
+.. automodule:: parsfet.data
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Module contents
 ---------------
 
