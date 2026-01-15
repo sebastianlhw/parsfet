@@ -1,0 +1,363 @@
+"""
+Pars-FET CLI - Command Line Interface
+
+Usage:
+    parsfet parse <file>           Parse and summarize a technology file
+    parsfet normalize <lib>        Normalize library to INVD1 baseline
+    parsfet compare <lib1> <lib2>  Compare two libraries
+    parsfet fingerprint <lib>      Generate technology fingerprint
+"""
+
+import json
+from pathlib import Path
+from typing import Optional
+
+import typer
+from rich import print as rprint
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+app = typer.Typer(
+    name="parsfet",
+    help="Pars-FET: VLSI Technology Abstraction Framework",
+    no_args_is_help=True,
+)
+console = Console()
+
+
+def detect_format(path: Path, forced_format: Optional[str] = None) -> str:
+    """Detect file format from extension or forced format"""
+    if forced_format:
+        return forced_format.lower()
+
+    suffix = path.suffix.lower()
+
+    if suffix == ".lib":
+        return "lib"
+    elif suffix == ".lef":
+        return "lef"
+    elif suffix == ".techlef":
+        return "techlef"
+    elif suffix == ".ict":
+        return "ict"
+    else:
+        # Try to detect from content
+        content = path.read_text(encoding="utf-8", errors="replace")[:1000]
+        if "library" in content.lower() and "cell" in content.lower():
+            return "lib"
+        elif "LAYER" in content or "MACRO" in content:
+            return "lef"
+        return "unknown"
+
+
+@app.command()
+def parse(
+    file: Path = typer.Argument(..., help="Path to technology file"),
+    format: Optional[str] = typer.Option(
+        None, "--format", "-f", help="Force format: lib, lef, techlef"
+    ),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
+):
+    """Parse a technology file and display summary"""
+    if not file.exists():
+        console.print(f"[red]Error:[/red] File not found: {file}")
+        raise typer.Exit(1)
+
+    detected_format = detect_format(file, format)
+
+    if detected_format == "lib":
+        from .parsers.liberty import LibertyParser
+
+        parser = LibertyParser()
+        lib = parser.parse(file)
+
+        # Display summary
+        console.print(
+            Panel.fit(
+                f"[bold green]Library:[/] {lib.name}\n"
+                f"[bold]Cells:[/] {len(lib.cells)}\n"
+                f"[bold]Technology:[/] {lib.technology or 'N/A'}\n"
+                f"[bold]Nom Voltage:[/] {lib.nom_voltage or 'N/A'} V\n"
+                f"[bold]Nom Temp:[/] {lib.nom_temperature or 'N/A'} °C\n"
+                f"[bold]Baseline Cell:[/] {lib.baseline_cell.name if lib.baseline_cell else 'Not found'}",
+                title="Liberty Summary",
+            )
+        )
+
+        if verbose:
+            # Show cell breakdown
+            table = Table(title="Cell Types")
+            table.add_column("Type")
+            table.add_column("Count", justify="right")
+
+            inv_count = sum(1 for n in lib.cells if "INV" in n.upper())
+            buf_count = sum(1 for n in lib.cells if "BUF" in n.upper())
+            nand_count = sum(1 for n in lib.cells if "NAND" in n.upper())
+            nor_count = sum(1 for n in lib.cells if "NOR" in n.upper())
+            dff_count = sum(1 for n in lib.cells if "DFF" in n.upper())
+
+            table.add_row("Inverters", str(inv_count))
+            table.add_row("Buffers", str(buf_count))
+            table.add_row("NANDs", str(nand_count))
+            table.add_row("NORs", str(nor_count))
+            table.add_row("DFFs", str(dff_count))
+
+            console.print(table)
+
+        # Validation warnings
+        warnings = parser.validate(lib)
+        if warnings:
+            for w in warnings:
+                console.print(f"[yellow]Warning:[/yellow] {w}")
+
+        # Output to JSON
+        if output:
+            data = lib.model_dump()
+            output.write_text(json.dumps(data, indent=2, default=str))
+            console.print(f"[green]Saved to:[/green] {output}")
+
+    elif detected_format in ("lef", "techlef"):
+        from .parsers.lef import LEFParser, TechLEFParser
+
+        if detected_format == "techlef":
+            parser = TechLEFParser()
+        else:
+            parser = LEFParser()
+
+        lef = parser.parse(file)
+
+        console.print(
+            Panel.fit(
+                f"[bold green]LEF File:[/] {file.name}\n"
+                f"[bold]Version:[/] {lef.version or 'N/A'}\n"
+                f"[bold]Layers:[/] {len(lef.layers)}\n"
+                f"[bold]Vias:[/] {len(lef.vias)}\n"
+                f"[bold]Sites:[/] {len(lef.sites)}\n"
+                f"[bold]Macros:[/] {len(getattr(lef, 'macros', {}))}",
+                title="LEF Summary",
+            )
+        )
+
+        if verbose and lef.layers:
+            table = Table(title="Layers")
+            table.add_column("Name")
+            table.add_column("Type")
+            table.add_column("Direction")
+            table.add_column("Pitch")
+
+            for name, layer in lef.layers.items():
+                table.add_row(
+                    name,
+                    layer.layer_type.value if layer.layer_type else "N/A",
+                    layer.direction.value if layer.direction else "N/A",
+                    f"{layer.pitch:.3f}" if layer.pitch else "N/A",
+                )
+
+            console.print(table)
+
+        if output:
+            data = lef.model_dump()
+            output.write_text(json.dumps(data, indent=2, default=str))
+            console.print(f"[green]Saved to:[/green] {output}")
+
+    else:
+        console.print(f"[red]Error:[/red] Unknown format: {detected_format}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def normalize(
+    lib_file: Path = typer.Argument(..., help="Path to Liberty file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+    baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
+):
+    """Normalize library metrics to INVD1 baseline"""
+    if not lib_file.exists():
+        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        raise typer.Exit(1)
+
+    from .normalizers.invd1 import INVD1Normalizer
+    from .parsers.liberty import LibertyParser
+
+    parser = LibertyParser()
+    lib = parser.parse(lib_file)
+
+    try:
+        normalizer = INVD1Normalizer(lib, baseline_name=baseline)
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    summary = normalizer.get_summary()
+
+    console.print(
+        Panel.fit(
+            f"[bold green]Library:[/] {lib.name}\n"
+            f"[bold]Baseline Cell:[/] {summary['baseline_cell']}\n"
+            f"[bold]Total Cells:[/] {summary['total_cells']}\n\n"
+            f"[bold]Area Ratios:[/]\n"
+            f"  Mean: {summary['area_ratio_stats'].get('mean', 0):.2f}\n"
+            f"  Min: {summary['area_ratio_stats'].get('min', 0):.2f}\n"
+            f"  Max: {summary['area_ratio_stats'].get('max', 0):.2f}\n\n"
+            f"[bold]Delay Ratios:[/]\n"
+            f"  Mean: {summary['delay_ratio_stats'].get('mean', 0):.2f}\n"
+            f"  Min: {summary['delay_ratio_stats'].get('min', 0):.2f}\n"
+            f"  Max: {summary['delay_ratio_stats'].get('max', 0):.2f}",
+            title="Normalization Summary",
+        )
+    )
+
+    if output:
+        data = normalizer.export_to_json()
+        output.write_text(json.dumps(data, indent=2, default=str))
+        console.print(f"[green]Saved to:[/green] {output}")
+
+
+@app.command()
+def compare(
+    lib_a: Path = typer.Argument(..., help="First Liberty file"),
+    lib_b: Path = typer.Argument(..., help="Second Liberty file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+):
+    """Compare two Liberty libraries"""
+    for f in [lib_a, lib_b]:
+        if not f.exists():
+            console.print(f"[red]Error:[/red] File not found: {f}")
+            raise typer.Exit(1)
+
+    from .comparators.cell_diff import compare_cell_coverage
+    from .comparators.fingerprint import (compare_fingerprints,
+                                          create_fingerprint)
+    from .parsers.liberty import LibertyParser
+
+    parser = LibertyParser()
+    a = parser.parse(lib_a)
+    b = parser.parse(lib_b)
+
+    # Cell coverage comparison
+    diff = compare_cell_coverage(a, b)
+
+    table = Table(title="Cell Coverage Comparison")
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Library A", a.name)
+    table.add_row("Library B", b.name)
+    table.add_row("Only in A", str(len(diff.only_in_a)))
+    table.add_row("Only in B", str(len(diff.only_in_b)))
+    table.add_row("Common", str(len(diff.common)))
+    table.add_row("Jaccard Similarity", f"{diff.jaccard_similarity:.2%}")
+    table.add_row("A Coverage in B", f"{diff.coverage_a_in_b:.2%}")
+    table.add_row("B Coverage in A", f"{diff.coverage_b_in_a:.2%}")
+
+    console.print(table)
+
+    # Fingerprint comparison
+    try:
+        fp_a = create_fingerprint(a)
+        fp_b = create_fingerprint(b)
+        fp_comparison = compare_fingerprints(fp_a, fp_b)
+
+        console.print(
+            f"\n[bold]Fingerprint Similarity:[/] {fp_comparison['similarity']['cosine']:.3f}"
+        )
+
+        if fp_a.baseline_delay > 0 and fp_b.baseline_delay > 0:
+            speed_ratio = fp_a.baseline_delay / fp_b.baseline_delay
+            if speed_ratio > 1:
+                console.print(f"[bold]Speed:[/] {b.name} is {speed_ratio:.2f}x faster")
+            else:
+                console.print(f"[bold]Speed:[/] {a.name} is {1 / speed_ratio:.2f}x faster")
+    except Exception:
+        pass  # Fingerprinting optional
+
+    if output:
+        data = {
+            "cell_diff": diff.to_dict(),
+            "fingerprints": {
+                "a": fp_a.to_dict() if "fp_a" in dir() else None,
+                "b": fp_b.to_dict() if "fp_b" in dir() else None,
+            },
+            "comparison": fp_comparison if "fp_comparison" in dir() else None,
+        }
+        output.write_text(json.dumps(data, indent=2, default=str))
+        console.print(f"[green]Saved to:[/green] {output}")
+
+
+@app.command()
+def fingerprint(
+    lib_file: Path = typer.Argument(..., help="Path to Liberty file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+):
+    """Generate technology fingerprint"""
+    if not lib_file.exists():
+        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        raise typer.Exit(1)
+
+    from .comparators.fingerprint import create_fingerprint
+    from .parsers.liberty import LibertyParser
+
+    parser = LibertyParser()
+    lib = parser.parse(lib_file)
+
+    fp = create_fingerprint(lib)
+
+    console.print(
+        Panel.fit(
+            f"[bold green]Library:[/] {fp.name}\n"
+            f"[bold]Baseline Cell:[/] {fp.baseline_cell or 'N/A'}\n\n"
+            f"[bold]Baseline Metrics:[/]\n"
+            f"  Area: {fp.baseline_area:.4f} um²\n"
+            f"  Delay: {fp.baseline_delay:.4f} ns\n"
+            f"  Leakage: {fp.baseline_leakage:.4f} nW\n\n"
+            f"[bold]Cell Counts:[/]\n"
+            f"  Total: {fp.total_cells}\n"
+            f"  Combinational: {fp.combinational_cells}\n"
+            f"  Sequential: {fp.sequential_cells}\n\n"
+            f"[bold]Function Types:[/]\n"
+            f"  INV: {fp.inverter_count} | BUF: {fp.buffer_count}\n"
+            f"  NAND: {fp.nand_count} | NOR: {fp.nor_count}\n"
+            f"  DFF: {fp.dff_count} | LATCH: {fp.latch_count}",
+            title="Technology Fingerprint",
+        )
+    )
+
+    if output:
+        data = fp.to_dict()
+        output.write_text(json.dumps(data, indent=2, default=str))
+        console.print(f"[green]Saved to:[/green] {output}")
+
+
+@app.command()
+def export(
+    lib_file: Path = typer.Argument(..., help="Path to Liberty file"),
+    output: Path = typer.Argument(..., help="Output JSON file"),
+    include_timing: bool = typer.Option(True, help="Include timing arc data"),
+):
+    """Export library to JSON format"""
+    if not lib_file.exists():
+        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        raise typer.Exit(1)
+
+    from .parsers.liberty import LibertyParser
+
+    parser = LibertyParser()
+    lib = parser.parse(lib_file)
+
+    # Export with options
+    data = lib.model_dump(exclude_none=True)
+
+    if not include_timing:
+        # Remove timing arcs to reduce size
+        for cell in data.get("cells", {}).values():
+            cell.pop("timing_arcs", None)
+            cell.pop("power_arcs", None)
+
+    output.write_text(json.dumps(data, indent=2, default=str))
+    console.print(f"[green]Exported {len(lib.cells)} cells to:[/green] {output}")
+
+
+if __name__ == "__main__":
+    app()
