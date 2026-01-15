@@ -4,6 +4,13 @@ Mint-Pars-FET is a fresh, Pythonic technology file parser designed to turn messy
 
 A Python-based framework for parsing semiconductor technology files (`.lib`, `.lef`, `.techlef`, `.ict`) and enabling cross-process comparison and ML analysis.
 
+## Key Features
+
+- **Logic Function Classification**: Automatically identifies NAND, NOR, XOR, etc., from boolean formulas.
+- **Linear Delay Modeling (D₀ + k)**: Separates intrinsic delay from drive capability for architecture-agnostic comparison.
+- **Fit Quality Metrics**: Validates linear delay assumptions with R² and residual analysis.
+- **Technology Fingerprinting**: Creates vector representations of libraries for ML applications.
+
 ## Installation
 
 ```bash

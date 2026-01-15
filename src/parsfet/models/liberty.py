@@ -149,7 +149,7 @@ class LookupTable(BaseModel):
                 return i
         return len(arr) - 2 if arr else 0
 
-    def fit_linear_model(self, slew: float) -> tuple[float, float]:
+    def fit_linear_model(self, slew: float) -> tuple[float, float, float]:
         """Fits a linear delay model: D = D0 + k * Load.
 
         At a fixed input slew, this method extracts the delay vs. load relationship
@@ -159,13 +159,14 @@ class LookupTable(BaseModel):
             slew: The input slew value to use for fitting.
 
         Returns:
-            A tuple (intrinsic_delay, load_slope), where:
+            A tuple (intrinsic_delay, load_slope, r_squared), where:
             - intrinsic_delay (D0): The delay at zero load.
             - load_slope (k): The delay increase per unit load (logical effort factor).
+            - r_squared: Coefficient of determination (fit quality, 1.0 = perfect).
         """
         if not self.is_2d or not self.index_2 or len(self.index_2) < 2:
             # 1D table or insufficient data
-            return (self.center_value, 0.0)
+            return (self.center_value, 0.0, 1.0)
 
         # Sample delay at multiple load points along the fixed slew
         loads = self.index_2
@@ -181,12 +182,18 @@ class LookupTable(BaseModel):
         denominator = sum((loads[i] - mean_load) ** 2 for i in range(n))
 
         if denominator == 0:
-            return (mean_delay, 0.0)
+            return (mean_delay, 0.0, 1.0)
 
         slope = numerator / denominator  # k: delay per unit load
         intercept = mean_delay - slope * mean_load  # D₀: intrinsic delay
 
-        return (max(intercept, 0.0), slope)  # Ensure non-negative intrinsic delay
+        # Compute R² (coefficient of determination)
+        d0 = max(intercept, 0.0)
+        ss_res = sum((delays[i] - (d0 + slope * loads[i])) ** 2 for i in range(n))
+        ss_tot = sum((delays[i] - mean_delay) ** 2 for i in range(n))
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 1.0
+
+        return (d0, slope, r_squared)  # Ensure non-negative intrinsic delay
 
 
 class Pin(BaseModel):
@@ -291,7 +298,7 @@ class TimingArc(BaseModel):
             trans.append(self.fall_transition.interpolate(slew, load))
         return sum(trans) / len(trans) if trans else slew  # Fallback to input slew
 
-    def linear_delay_model(self, slew: float) -> tuple[float, float]:
+    def linear_delay_model(self, slew: float) -> tuple[float, float, float]:
         """Extracts a linear delay model: D = D0 + k * Load.
 
         Averages the linear models derived from the cell_rise and cell_fall tables.
@@ -300,7 +307,7 @@ class TimingArc(BaseModel):
             slew: The input slew value for model extraction.
 
         Returns:
-            A tuple (intrinsic_delay, load_slope).
+            A tuple (intrinsic_delay, load_slope, r_squared).
         """
         models = []
         if self.cell_rise:
@@ -309,11 +316,12 @@ class TimingArc(BaseModel):
             models.append(self.cell_fall.fit_linear_model(slew))
 
         if not models:
-            return (0.0, 0.0)
+            return (0.0, 0.0, 1.0)
 
         avg_d0 = sum(m[0] for m in models) / len(models)
         avg_k = sum(m[1] for m in models) / len(models)
-        return (avg_d0, avg_k)
+        avg_r2 = sum(m[2] for m in models) / len(models)
+        return (avg_d0, avg_k, avg_r2)
 
     model_config = {"extra": "allow"}
 
@@ -415,24 +423,26 @@ class Cell(BaseModel):
         trans = [t for t in trans if t > 0]
         return sum(trans) / len(trans) if trans else slew
 
-    def linear_delay_model(self, slew: float) -> tuple[float, float]:
-        """Extracts a linear delay model averaged across all timing arcs.
+    def linear_delay_model(self, slew: float) -> tuple[float, float, float]:
+        """Extracts a linear delay model from the slowest timing arc.
+
+        Uses the slowest arc (max delay) for conservative estimation.
 
         Args:
             slew: Input slew for model extraction.
 
         Returns:
-            A tuple (intrinsic_delay, load_slope).
+            A tuple (intrinsic_delay, load_slope, r_squared).
         """
         models = [arc.linear_delay_model(slew) for arc in self.timing_arcs]
-        models = [(d0, k) for d0, k in models if d0 > 0 or k > 0]
+        models = [(d0, k, r2) for d0, k, r2 in models if d0 > 0 or k > 0]
 
         if not models:
-            return (0.0, 0.0)
+            return (0.0, 0.0, 1.0)
 
-        avg_d0 = sum(m[0] for m in models) / len(models)
-        avg_k = sum(m[1] for m in models) / len(models)
-        return (avg_d0, avg_k)
+        # Use slowest arc (max D₀) for conservative estimate
+        slowest = max(models, key=lambda m: m[0])
+        return slowest
 
     model_config = {"extra": "allow"}
 

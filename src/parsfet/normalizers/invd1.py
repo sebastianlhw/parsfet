@@ -38,6 +38,8 @@ class NormalizedMetrics:
         raw_k_ns_per_pf: Raw load slope in ns/pF.
         raw_leakage: Raw leakage power.
         raw_input_cap: Raw input capacitance in pF.
+        fit_r_squared: R² of the linear fit (1.0 = perfect).
+        fit_residual_pct: Signed residual at FO4 (%, positive = pessimistic).
     """
 
     cell_name: str
@@ -63,6 +65,10 @@ class NormalizedMetrics:
     raw_leakage: float = 0.0
     raw_input_cap: float = 0.0
 
+    # Fit quality metrics
+    fit_r_squared: float = 1.0      # R² of linear fit (1.0 = perfect)
+    fit_residual_pct: float = 0.0   # Signed residual at FO4 (%, positive = pessimistic)
+
     def to_dict(self) -> dict:
         """Converts the normalized metrics to a dictionary for JSON serialization."""
         return {
@@ -76,6 +82,10 @@ class NormalizedMetrics:
             "delay_model": {
                 "d0_ns": self.raw_d0_ns,
                 "k_ns_per_pf": self.raw_k_ns_per_pf,
+            },
+            "fit_quality": {
+                "r_squared": self.fit_r_squared,
+                "fo4_residual_pct": self.fit_residual_pct,
             },
             "drive_strength": self.drive_strength,
             "num_inputs": self.num_inputs,
@@ -181,7 +191,7 @@ class INVD1Normalizer:
 
         # Extract linear delay model: D = D₀ + k × Load
         # Use FO4 slew as the operating point for model extraction
-        d0_raw, k_raw = cell.linear_delay_model(self.fo4_slew)
+        d0_raw, k_raw, _ = cell.linear_delay_model(self.fo4_slew)  # Ignore R² for baseline
 
         # Convert to canonical units
         if d0_raw <= 0:
@@ -239,8 +249,8 @@ class INVD1Normalizer:
         # Extract raw values and convert to canonical units
         raw_area = cell.area if cell.area > 0 else 0.0
 
-        # Extract linear delay model: D = D₀ + k × Load
-        d0_raw, k_raw = cell.linear_delay_model(self.fo4_slew)
+        # Extract linear delay model: D = D₀ + k × Load (using slowest arc)
+        d0_raw, k_raw, fit_r2 = cell.linear_delay_model(self.fo4_slew)
 
         # Convert to canonical units
         if d0_raw <= 0:
@@ -249,6 +259,7 @@ class INVD1Normalizer:
             if d0_raw <= 0:
                 d0_raw = cell.representative_delay
             k_raw = 0.0
+            fit_r2 = 1.0  # No fit quality data
 
         raw_d0_ns = self.unit_normalizer.normalize_time(d0_raw) if d0_raw > 0 else 0.0
         raw_k_ns_per_pf = (
@@ -262,6 +273,15 @@ class INVD1Normalizer:
         raw_input_cap = cell.total_input_capacitance
         if raw_input_cap > 0:
             raw_input_cap = self.unit_normalizer.normalize_capacitance(raw_input_cap)
+
+        # Compute FO4 residual: (model - actual) / actual * 100
+        # Positive = pessimistic (model predicts slower)
+        actual_fo4_delay = cell.delay_at(self.fo4_slew, self.fo4_load)
+        if actual_fo4_delay > 0 and d0_raw > 0:
+            model_fo4_delay = d0_raw + k_raw * self.fo4_load
+            fit_residual_pct = ((model_fo4_delay - actual_fo4_delay) / actual_fo4_delay) * 100
+        else:
+            fit_residual_pct = 0.0
 
         # Compute ratios (both are now in canonical units)
         area_ratio = raw_area / self.baseline.area if self.baseline.area > 0 else 0.0
@@ -292,6 +312,8 @@ class INVD1Normalizer:
             raw_k_ns_per_pf=raw_k_ns_per_pf,
             raw_leakage=raw_leakage,
             raw_input_cap=raw_input_cap,
+            fit_r_squared=fit_r2,
+            fit_residual_pct=fit_residual_pct,
         )
 
     def normalize_all(self) -> dict[str, NormalizedMetrics]:

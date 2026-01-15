@@ -32,9 +32,16 @@ Here is what these terms actually mean physically:
 Extraction
 ^^^^^^^^^^
 
-Real timing data comes in lookup tables (NLDM), which are just grids of numbers measured by a simulator. To get our simple :math:`D_0` and :math:`k`, we take a slice of that table at a fixed input speed (slew) and fit a straight line through the delay vs. load points.
 
-We usually pick the **FO4 (Fanout-of-4) slew**. This is the speed at which a signal transitions when an inverter drives 4 copies of itself. It's a "typical" situation in a real chip.
+Real timing data comes in lookup tables (NLDM), which are grids of simulator measurements. To extract our simple Parameters :math:`D_0` and :math:`k`, we perform a **least-squares linear regression**:
+
+1.  Select the column in the NLDM table corresponding to the **FO4 (Fanout-of-4) input slew**.
+2.  Collect the (Load, Delay) points from that column.
+3.  Fit a straight line :math:`D = D_0 + k \cdot C_{load}` to these points.
+4.  The **y-intercept** of this line is :math:`D_0` (intrinsic delay).
+5.  The **slope** of this line is :math:`k` (drive resistance).
+
+We use the FO4 slew because it represents a "typical" signal transition speed in a real digital circuit (an inverter driving 4 copies of itself).
 
 Normalization
 ^^^^^^^^^^^^^
@@ -52,6 +59,19 @@ If a NAND gate has a Delay Ratio of 1.5, it means "this gate is 50% slower than 
    \text{Effort Ratio} = \frac{k_{\text{cell}}}{k_{\text{INV}}}
 
 If the Effort Ratio is 1.3, it means "this gate struggles 30% more than an inverter to drive the same load." This is effectively the **Logical Effort** ($g$) from Sutherland's theory.
+
+Fit Quality
+^^^^^^^^^^^
+
+The linear model is an approximation. To check its validity, we calculate:
+
+1.  **R² (Coefficient of Determination):** How well the line fits the data points across all loads.
+    *   :math:`R^2 \approx 1.0`: Excellent fit.
+    *   :math:`R^2 < 0.9`: Poor fit; use careful judgement.
+
+2.  **FO4 Residual:** The percentage error at the "Fanout-of-4" load point.
+    *   **Positive:** Model is pessimistic (predicts slower than reality).
+    *   **Negative:** Model is optimistic (predicts faster than reality).
 
 Interpolation
 -------------

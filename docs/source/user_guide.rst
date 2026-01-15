@@ -37,8 +37,13 @@ Absolute numbers are hard to compare. A "fast" NAND gate in 180nm is slow in 7nm
 
    parsfet normalize path/to/library.lib --output normalized.json
 
-This divides every metric (area, delay, leakage) by the corresponding metric of the standard inverter (INVD1).
-If a cell has a delay of 2.0, it means it's exactly twice as slow as an inverter. That fact remains true regardless of the process node.
+This extracts a linear delay model (:math:`D = D_0 + k \cdot C_{load}`) for every cell and normalizes it against the baseline inverter.
+
+*   **d0_ratio**: Intrinsic delay (unloaded speed) relative to INVD1.
+*   **k_ratio**: Logical effort (drive capability) relative to INVD1.
+*   **fit_quality**: Metrics (R²) to ensure the linear model is valid.
+
+It also automatically classifies logic gates (NAND, NOR, etc.) based on their boolean function. If a NAND gate has a ``d0_ratio`` of 1.5, it means it's 50% slower internally than an inverter, regardless of the process node.
 
 Compare Two Libraries
 ^^^^^^^^^^^^^^^^^^^^^
