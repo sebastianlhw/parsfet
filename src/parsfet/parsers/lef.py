@@ -1,19 +1,15 @@
-"""
-LEF (.lef) and TechLEF (.techlef) file parsers.
+"""LEF (.lef) and TechLEF (.techlef) file parsers.
 
-LEF uses a keyword-based section format:
-    LAYER M1
-        TYPE ROUTING ;
-        DIRECTION HORIZONTAL ;
-        PITCH 0.14 ;
-    END M1
+LEF files describe the physical layout rules and macro definitions of a technology.
+This module provides parsers for both standard LEF (containing macros) and
+Technology LEF (containing only layer/via definitions).
 
 Reference: LEF/DEF Language Reference (Cadence)
 """
 
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from ..models.lef import (LayerDirection, LayerType, LEFLibrary, Macro,
                           MacroPin, MetalLayer, Rect, Site, TechLEF, Via)
@@ -21,20 +17,35 @@ from .base import BaseParser
 
 
 class LEFParser(BaseParser[LEFLibrary]):
-    """
-    Parser for LEF (Library Exchange Format) files.
+    """Parser for LEF (Library Exchange Format) files.
 
-    Handles both cell LEF (with MACROs) and technology LEF (layers/vias only).
+    Capable of parsing both technology definitions (layers, vias, sites) and
+    physical macro definitions (cells, pins, obstructions).
     """
 
     def parse(self, path: Path) -> LEFLibrary:
-        """Parse LEF file from path"""
+        """Parses a LEF file from a given path.
+
+        Args:
+            path: Path to the LEF file.
+
+        Returns:
+            A populated LEFLibrary object.
+        """
         content = self._read_file(path, encoding="utf-8", errors="replace")
         name = path.name.split(".")[0]
         return self.parse_string(content, name)
 
     def parse_string(self, content: str, name: str = "unknown") -> LEFLibrary:
-        """Parse LEF from string content"""
+        """Parses LEF content from a string.
+
+        Args:
+            content: The LEF file content.
+            name: Name for the library.
+
+        Returns:
+            A populated LEFLibrary object.
+        """
         # Preprocess: remove comments
         content = self._remove_comments(content)
 
@@ -70,11 +81,11 @@ class LEFParser(BaseParser[LEFLibrary]):
         return library
 
     def _remove_comments(self, content: str) -> str:
-        """Remove # line comments"""
+        """Removes '#' comments from the content."""
         return re.sub(r"#.*$", "", content, flags=re.MULTILINE)
 
     def _parse_layers(self, content: str) -> dict[str, MetalLayer]:
-        """Extract LAYER sections"""
+        """Parses LAYER sections from the content."""
         layers = {}
 
         # Pattern for LAYER ... END layername
@@ -162,7 +173,7 @@ class LEFParser(BaseParser[LEFLibrary]):
         return layers
 
     def _parse_vias(self, content: str) -> dict[str, Via]:
-        """Extract VIA sections"""
+        """Parses VIA sections from the content."""
         vias = {}
 
         # Pattern for VIA ... END vianame
@@ -188,7 +199,7 @@ class LEFParser(BaseParser[LEFLibrary]):
         return vias
 
     def _parse_sites(self, content: str) -> dict[str, Site]:
-        """Extract SITE sections"""
+        """Parses SITE sections from the content."""
         sites = {}
 
         # Pattern for SITE ... END sitename
@@ -221,7 +232,7 @@ class LEFParser(BaseParser[LEFLibrary]):
         return sites
 
     def _parse_macros(self, content: str) -> dict[str, Macro]:
-        """Extract MACRO sections"""
+        """Parses MACRO sections from the content."""
         macros = {}
 
         # Pattern for MACRO ... END macroname
@@ -283,7 +294,7 @@ class LEFParser(BaseParser[LEFLibrary]):
         return macros
 
     def _parse_macro_pins(self, macro_body: str) -> dict[str, MacroPin]:
-        """Extract PIN sections from macro body"""
+        """Parses PIN sections within a macro body."""
         pins = {}
 
         # Pattern for PIN ... END pinname
@@ -323,7 +334,7 @@ class LEFParser(BaseParser[LEFLibrary]):
         return pins
 
     def _parse_obstructions(self, macro_body: str) -> list[Rect]:
-        """Extract OBS (obstruction) rectangles"""
+        """Parses OBS (obstruction) sections within a macro body."""
         obstructions = []
 
         obs_pattern = r"OBS\s*(.*?)END"
@@ -342,7 +353,19 @@ class LEFParser(BaseParser[LEFLibrary]):
         return obstructions
 
     def validate(self, data: LEFLibrary) -> list[str]:
-        """Validate parsed LEF library"""
+        """Validates the parsed LEF library.
+
+        Checks for basic consistency:
+        - At least one layer defined.
+        - At least one site defined.
+        - All macros have positive dimensions.
+
+        Args:
+            data: The parsed LEFLibrary object.
+
+        Returns:
+            A list of warning messages.
+        """
         warnings = []
 
         if not data.layers:
@@ -360,23 +383,28 @@ class LEFParser(BaseParser[LEFLibrary]):
 
 
 class TechLEFParser(BaseParser[TechLEF]):
-    """
-    Parser for Technology LEF files.
+    """Parser for Technology LEF files.
 
-    TechLEF contains only layer and via definitions (no macros).
+    Technology LEF files contain layer, via, and site definitions but typically
+    no macro definitions.
     """
 
     def __init__(self):
+        """Initializes the TechLEFParser."""
         self._lef_parser = LEFParser()
 
     def parse(self, path: Path) -> TechLEF:
-        """Parse TechLEF file from path"""
+        """Parses a TechLEF file from a given path."""
         content = self._read_file(path, encoding="utf-8", errors="replace")
         name = path.name.split(".")[0]
         return self.parse_string(content, name)
 
     def parse_string(self, content: str, name: str = "unknown") -> TechLEF:
-        """Parse TechLEF from string content"""
+        """Parses TechLEF content from a string.
+
+        Delegates to LEFParser for the underlying parsing logic but wraps the result
+        in a TechLEF object.
+        """
         # Use LEF parser for the heavy lifting
         lef = self._lef_parser.parse_string(content, name)
 
@@ -390,7 +418,10 @@ class TechLEFParser(BaseParser[TechLEF]):
         )
 
     def validate(self, data: TechLEF) -> list[str]:
-        """Validate parsed TechLEF"""
+        """Validates the parsed TechLEF.
+
+        Checks that layers and routing layers are defined.
+        """
         warnings = []
 
         if not data.layers:

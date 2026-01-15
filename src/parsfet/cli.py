@@ -1,11 +1,15 @@
-"""
-Pars-FET CLI - Command Line Interface
+"""Pars-FET CLI - Command Line Interface.
 
-Usage:
-    parsfet parse <file>           Parse and summarize a technology file
-    parsfet normalize <lib>        Normalize library to INVD1 baseline
-    parsfet compare <lib1> <lib2>  Compare two libraries
-    parsfet fingerprint <lib>      Generate technology fingerprint
+This module provides the command-line interface for the Pars-FET framework,
+allowing users to parse, normalize, compare, and fingerprint semiconductor
+technology files (.lib, .lef, .techlef).
+
+The CLI is built using Typer and uses Rich for formatted output.
+
+Typical usage example:
+
+  $ parsfet parse my_tech.lib
+  $ parsfet normalize my_tech.lib --output normalized.json
 """
 
 import json
@@ -27,7 +31,16 @@ console = Console()
 
 
 def detect_format(path: Path, forced_format: Optional[str] = None) -> str:
-    """Detect file format from extension or forced format"""
+    """Detects the file format from the extension or content.
+
+    Args:
+        path: The path to the file.
+        forced_format: An optional string to force a specific format.
+            Acceptable values are 'lib', 'lef', 'techlef', 'ict'.
+
+    Returns:
+        A string representing the detected format ('lib', 'lef', 'techlef', 'ict', or 'unknown').
+    """
     if forced_format:
         return forced_format.lower()
 
@@ -60,7 +73,23 @@ def parse(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
 ):
-    """Parse a technology file and display summary"""
+    """Parses a technology file and displays a summary.
+
+    This command supports Liberty (.lib), LEF (.lef), and TechLEF (.techlef) formats.
+    It parses the file, displays a summary of the contents (e.g., number of cells,
+    layers, operating conditions), and optionally saves the parsed data to a JSON file.
+
+    Args:
+        file: The path to the technology file to parse.
+        format: Optional. Force the parser to use a specific format ('lib', 'lef', 'techlef').
+            If not provided, the format is detected automatically.
+        output: Optional. Path to save the parsed data as a JSON file.
+        verbose: Optional. If True, displays more detailed information such as cell
+            breakdowns or layer details.
+
+    Raises:
+        typer.Exit: If the file is not found or the format is unknown.
+    """
     if not file.exists():
         console.print(f"[red]Error:[/red] File not found: {file}")
         raise typer.Exit(1)
@@ -173,7 +202,21 @@ def normalize(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
 ):
-    """Normalize library metrics to INVD1 baseline"""
+    """Normalizes library metrics to the INVD1 baseline.
+
+    This command calculates relative metrics (area, delay) for all cells in the library,
+    normalized to the baseline inverter (typically INVD1). This allows for technology-agnostic
+    comparisons between different libraries or process nodes.
+
+    Args:
+        lib_file: Path to the Liberty (.lib) file.
+        output: Optional. Path to save the normalized data as a JSON file.
+        baseline: Optional. Name of the baseline cell to use. If not provided,
+            the tool attempts to automatically detect the standard inverter.
+
+    Raises:
+        typer.Exit: If the file is not found or normalization fails.
+    """
     if not lib_file.exists():
         console.print(f"[red]Error:[/red] File not found: {lib_file}")
         raise typer.Exit(1)
@@ -221,7 +264,20 @@ def compare(
     lib_b: Path = typer.Argument(..., help="Second Liberty file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
 ):
-    """Compare two Liberty libraries"""
+    """Compares two Liberty libraries.
+
+    Performs a comparison between two libraries, checking for cell coverage overlap
+    (Jaccard similarity) and comparing technological fingerprints (metrics at the
+    baseline inverter level).
+
+    Args:
+        lib_a: Path to the first Liberty file.
+        lib_b: Path to the second Liberty file.
+        output: Optional. Path to save the comparison results as a JSON file.
+
+    Raises:
+        typer.Exit: If either file is not found.
+    """
     for f in [lib_a, lib_b]:
         if not f.exists():
             console.print(f"[red]Error:[/red] File not found: {f}")
@@ -291,7 +347,19 @@ def fingerprint(
     lib_file: Path = typer.Argument(..., help="Path to Liberty file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
 ):
-    """Generate technology fingerprint"""
+    """Generates a technology fingerprint for a library.
+
+    A fingerprint is a compact representation of the technology's key characteristics,
+    derived from the baseline inverter's performance (area, delay, leakage) and the
+    distribution of cell types (combinational vs. sequential, function types).
+
+    Args:
+        lib_file: Path to the Liberty file.
+        output: Optional. Path to save the fingerprint data as a JSON file.
+
+    Raises:
+        typer.Exit: If the file is not found.
+    """
     if not lib_file.exists():
         console.print(f"[red]Error:[/red] File not found: {lib_file}")
         raise typer.Exit(1)
@@ -336,7 +404,20 @@ def export(
     output: Path = typer.Argument(..., help="Output JSON file"),
     include_timing: bool = typer.Option(True, help="Include timing arc data"),
 ):
-    """Export library to JSON format"""
+    """Exports a Liberty library to a JSON format.
+
+    This command converts the parsed Liberty structure into a JSON file, which is easier
+    to consume by other tools or languages.
+
+    Args:
+        lib_file: Path to the Liberty file.
+        output: Path to the output JSON file.
+        include_timing: Optional. If True (default), includes timing and power arc data.
+            Setting to False significantly reduces the output file size.
+
+    Raises:
+        typer.Exit: If the input file is not found.
+    """
     if not lib_file.exists():
         console.print(f"[red]Error:[/red] File not found: {lib_file}")
         raise typer.Exit(1)

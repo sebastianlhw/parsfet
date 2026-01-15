@@ -1,11 +1,11 @@
-"""
-Liberty (.lib) file parser.
+"""Liberty (.lib) file parser.
 
-Liberty format is a nested attribute/group structure used for timing characterization.
-This parser handles the full complexity of Liberty syntax including:
+Liberty format is a hierarchical attribute/group structure used for timing and power
+characterization of standard cells. This parser handles the full complexity of
+Liberty syntax, including:
 - Nested groups (library, cell, pin, timing, etc.)
-- Lookup tables (2D arrays for timing/power)
-- Complex attributes and expressions
+- Lookup tables (2D arrays for timing/power) with complex value structures
+- Attributes and expressions
 
 Reference: Liberty User Guide (Synopsys)
 """
@@ -14,50 +14,47 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models.common import OperatingCondition, ProcessCorner
 from ..models.liberty import (Cell, LibertyLibrary, LookupTable, Pin, PowerArc,
                               TimingArc)
 from .base import BaseParser
 
 
 class LibertyParser(BaseParser[LibertyLibrary]):
-    """
-    Parser for Liberty (.lib) timing files.
+    """Parser for Liberty (.lib) timing files.
 
-    The Liberty format uses a C-like syntax with nested groups:
-
-        library (name) {
-            cell (cellname) {
-                area : 1.0 ;
-                pin (pinname) {
-                    direction : input ;
-                    capacitance : 0.001 ;
-                }
-                timing () {
-                    related_pin : "A" ;
-                    cell_rise (lut_template) {
-                        index_1 ("0.1, 0.2, 0.3");
-                        values ("0.01, 0.02, 0.03");
-                    }
-                }
-            }
-        }
+    Implements a recursive descent parser to handle the nested structure of Liberty files.
     """
 
     def __init__(self):
+        """Initializes the LibertyParser."""
         self._pos = 0
         self._tokens: list[str] = []
         self._length = 0
 
     def parse(self, path: Path) -> LibertyLibrary:
-        """Parse Liberty file from path"""
+        """Parses a Liberty file from a given path.
+
+        Args:
+            path: Path to the Liberty file.
+
+        Returns:
+            A populated LibertyLibrary object.
+        """
         content = self._read_file(path, encoding="utf-8", errors="replace")
         # name is stem, but if it's .lib.gz we want the name without .lib
         name = path.name.split(".")[0]
         return self.parse_string(content, name)
 
     def parse_string(self, content: str, name: str = "unknown") -> LibertyLibrary:
-        """Parse Liberty from string content"""
+        """Parses Liberty content from a string.
+
+        Args:
+            content: The Liberty file content.
+            name: Name for the library.
+
+        Returns:
+            A populated LibertyLibrary object.
+        """
         # Preprocess: remove comments
         content = self._remove_comments(content)
 
@@ -76,7 +73,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return self._build_library(ast, name)
 
     def _remove_comments(self, content: str) -> str:
-        """Remove C-style and line comments"""
+        """Removes C-style (/* ... */) and line (// ...) comments."""
         # Remove /* ... */ comments
         content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
         # Remove // ... comments
@@ -84,14 +81,13 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return content
 
     def _tokenize(self, content: str) -> list[str]:
-        """
-        Convert content to token stream.
-        
-        Tokens are:
+        """Converts the content string into a stream of tokens.
+
+        Tokens include:
         - Identifiers: [a-zA-Z_][a-zA-Z0-9_]*
-        - Quoted strings: "..."
+        - Quoted strings: "..." or '...'
         - Numbers: -?[0-9]+.?[0-9]*([eE][+-]?[0-9]+)?
-        - Punctuation: { } ( ) ; : , \\ 
+        - Punctuation: { } ( ) ; : , \\
         """
         # Pattern matches tokens in order of precedence
         pattern = r"""
@@ -105,12 +101,12 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return tokens
 
     def _peek(self, offset: int = 0) -> Optional[str]:
-        """Look ahead at token without consuming"""
+        """Looks ahead at the token at the given offset without consuming it."""
         idx = self._pos + offset
         return self._tokens[idx] if idx < self._length else None
 
     def _consume(self) -> Optional[str]:
-        """Consume and return current token"""
+        """Consumes and returns the current token."""
         if self._pos >= self._length:
             return None
         token = self._tokens[self._pos]
@@ -118,27 +114,27 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return token
 
     def _expect(self, expected: str) -> str:
-        """Consume token and verify it matches expected"""
+        """Consumes the current token and verifies it matches the expected value."""
         token = self._consume()
         if token != expected:
             raise ValueError(f"Expected '{expected}', got '{token}' at position {self._pos}")
         return token
 
     def _skip_to(self, target: str) -> None:
-        """Skip tokens until target is found (consumes target)"""
+        """Skips tokens until the target token is found (consumes the target)."""
         while self._pos < self._length:
             if self._consume() == target:
                 return
         raise ValueError(f"Could not find '{target}'")
 
     def _parse_group(self) -> dict[str, Any]:
-        """
-        Parse a group: name (qualifier) { contents }
+        """Parses a group structure: name (qualifier) { contents }.
 
-        Returns dict with:
-        - _name: group name (e.g., "library", "cell", "pin")
-        - _qualifier: group qualifier (e.g., library name, cell name)
-        - ... other attributes and nested groups
+        Returns:
+            A dictionary containing:
+            - _name: The group name (e.g., "cell", "pin").
+            - _qualifier: The optional qualifier (e.g., cell name).
+            - Parsed attributes and nested groups.
         """
         result: dict[str, Any] = {}
 
@@ -168,7 +164,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return result
 
     def _parse_group_body(self) -> dict[str, Any]:
-        """Parse contents inside { } braces"""
+        """Parses the contents inside the curly braces { } of a group."""
         result: dict[str, Any] = {}
         result["_groups"] = []  # List to hold nested groups of same type
 
@@ -227,7 +223,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return result
 
     def _parse_attribute_value(self) -> Any:
-        """Parse attribute value (possibly quoted or a list)"""
+        """Parses the value of an attribute."""
         token = self._peek()
 
         if token is None:
@@ -274,7 +270,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return self._consume()
 
     def _build_library(self, ast: dict[str, Any], default_name: str) -> LibertyLibrary:
-        """Convert AST to LibertyLibrary model"""
+        """Converts the Abstract Syntax Tree (AST) to a LibertyLibrary model."""
         # Get library name from qualifier or default
         lib_name = ast.get("_qualifier", default_name) or default_name
         if isinstance(lib_name, str):
@@ -374,7 +370,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return cell
 
     def _build_pin(self, ast: dict[str, Any]) -> Pin:
-        """Build Pin from AST"""
+        """Builds a Pin object from the AST."""
         pin_name = ast.get("_qualifier", "unknown")
         if isinstance(pin_name, str):
             pin_name = pin_name.strip("\"'")
@@ -485,7 +481,10 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return lut
 
     def _extract_lut_index(self, data: Any) -> list[float]:
-        """Extract index values from LUT AST - handles both direct lists and group format"""
+        """Extracts index values from LUT AST.
+
+        Handles both direct lists and group format.
+        """
         if data is None:
             return []
 
@@ -514,7 +513,10 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return []
 
     def _extract_lut_values(self, data: Any) -> list[Any]:
-        """Extract values from LUT AST - handles both direct lists and group format"""
+        """Extracts values from LUT AST.
+
+        Handles both direct lists and group format, including multi-line values.
+        """
         if data is None:
             return []
 
@@ -554,7 +556,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return result
 
     def _parse_2d_values(self, values: Any) -> list[list[float]]:
-        """Parse 2D lookup table values"""
+        """Parses 2D lookup table values."""
         result = []
 
         if isinstance(values, list):
@@ -572,7 +574,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return result
 
     def _parse_number_list(self, s: str) -> list[float]:
-        """Parse comma-separated numbers from string"""
+        """Parses comma-separated numbers from a string."""
         s = s.strip("\"'")
         parts = re.split(r"[,\s]+", s)
         numbers = []
@@ -586,7 +588,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return numbers
 
     def _parse_cap_unit(self, value: Any) -> tuple[float, str]:
-        """Parse capacitive_load_unit value"""
+        """Parses capacitive_load_unit value."""
         if isinstance(value, list) and len(value) >= 2:
             return (float(value[0]), str(value[1]).strip("\"'"))
         if isinstance(value, str):
@@ -600,7 +602,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return (1.0, "pf")
 
     def _get_str(self, d: dict, key: str, default: str = None) -> Optional[str]:
-        """Get string value from dict"""
+        """Gets a string value from a dictionary, handling quotes."""
         val = d.get(key)
         if val is None:
             return default
@@ -620,7 +622,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return str(val)
 
     def _get_float(self, d: dict, key: str, default: float = None) -> Optional[float]:
-        """Get float value from dict"""
+        """Gets a float value from a dictionary."""
         val = d.get(key)
         if val is None:
             return default
@@ -632,7 +634,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
             return default
 
     def _get_bool(self, d: dict, key: str, default: bool = False) -> bool:
-        """Get boolean value from dict"""
+        """Gets a boolean value from a dictionary."""
         val = d.get(key)
         if val is None:
             return default
@@ -645,7 +647,13 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return bool(val)
 
     def validate(self, data: LibertyLibrary) -> list[str]:
-        """Validate parsed Liberty library"""
+        """Validates the parsed Liberty library.
+
+        Checks for:
+        - No cells in library.
+        - Missing baseline inverter (crucial for logical effort).
+        - Cells with zero or missing area.
+        """
         warnings = []
 
         if not data.cells:

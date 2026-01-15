@@ -1,21 +1,16 @@
-"""
-INVD1 Baseline Normalizer
+"""INVD1 Baseline Normalizer.
 
-The fundamental insight (per Elon's first principles approach):
-The inverter is the atomic unit of digital logic. By normalizing all
-metrics to a baseline inverter (typically INVD1), we can:
+This module implements the normalization of technology metrics to a baseline inverter
+(typically INVD1). This approach allows for process-independent comparisons by
+expressing performance characteristics (area, delay, leakage) as multiples of
+the fundamental atomic unit of the technology.
 
-1. Compare cells across different process nodes
-2. Understand the "cost" of complex gates in inverter-equivalents
-3. Enable ML models to learn process-independent patterns
-
-Example:
-    A NAND2 with normalized_delay = 1.5 means it's 1.5x slower than INVD1.
-    If INVD1 in 7nm has delay = 10ps and in 130nm has delay = 100ps,
-    the NAND2 would be ~15ps in 7nm and ~150ps in 130nm.
+The normalization uses a linear delay model (D = D0 + k * Load) extracted at
+the FO4 (Fanout-of-4) operating point.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
 from typing import Optional
 
 from ..models.liberty import Cell, LibertyLibrary
@@ -24,16 +19,25 @@ from .classifier import classify_cell
 
 @dataclass
 class NormalizedMetrics:
-    """
-    Cell metrics normalized to INVD1 baseline.
+    """Cell metrics normalized to the INVD1 baseline.
 
-    All ratios are (cell_value / baseline_value), so:
-    - ratio = 1.0 means same as baseline
-    - ratio = 2.0 means 2x the baseline
-    
-    Delay is represented as linear model: D = D₀ + k × Load
-    - d0_ratio: intrinsic delay ratio (cell.D₀ / baseline.D₀)
-    - k_ratio: load slope ratio (cell.k / baseline.k)
+    Attributes:
+        cell_name: Name of the cell.
+        cell_type: Classified type of the cell (e.g., 'nand', 'dff').
+        area_ratio: Cell area / Baseline area.
+        d0_ratio: Intrinsic delay ratio (Cell D0 / Baseline D0).
+        k_ratio: Load slope ratio (Cell k / Baseline k).
+        leakage_ratio: Cell leakage / Baseline leakage.
+        input_cap_ratio: Cell input capacitance / Baseline input capacitance.
+        drive_strength: Estimated drive strength relative to baseline.
+        num_inputs: Number of input pins.
+        num_outputs: Number of output pins.
+        is_sequential: True if the cell is sequential.
+        raw_area: Raw area in um².
+        raw_d0_ns: Raw intrinsic delay in ns.
+        raw_k_ns_per_pf: Raw load slope in ns/pF.
+        raw_leakage: Raw leakage power.
+        raw_input_cap: Raw input capacitance in pF.
     """
 
     cell_name: str
@@ -60,7 +64,7 @@ class NormalizedMetrics:
     raw_input_cap: float = 0.0
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization"""
+        """Converts the normalized metrics to a dictionary for JSON serialization."""
         return {
             "cell_name": self.cell_name,
             "cell_type": self.cell_type,
@@ -87,10 +91,10 @@ class NormalizedMetrics:
         }
 
     def to_feature_vector(self) -> list[float]:
-        """Convert to feature vector for ML
-        
-        Features: [area_ratio, d0_ratio, k_ratio, leakage_ratio, 
-                   input_cap_ratio, num_inputs, num_outputs, is_sequential]
+        """Converts metrics to a feature vector for machine learning tasks.
+
+        Features include ratios for area, D0, k, leakage, input cap, as well as
+        input/output counts and sequential flag.
         """
         return [
             self.area_ratio,
@@ -106,9 +110,10 @@ class NormalizedMetrics:
 
 @dataclass
 class BaselineMetrics:
-    """Extracted metrics from the baseline cell
-    
-    Includes D₀+k linear delay model parameters.
+    """Metrics extracted from the baseline cell (typically INVD1).
+
+    Includes the linear delay model parameters (D0, k) and the FO4 operating point
+    used for extraction.
     """
 
     cell_name: str
@@ -123,32 +128,23 @@ class BaselineMetrics:
 
 
 class INVD1Normalizer:
-    """
-    Normalize all cell metrics to INVD1 baseline.
+    """Normalizes library cells to an INVD1 baseline.
 
-    This enables cross-library comparison by expressing
-    everything as multiples of the fundamental inverter.
-
-    Delay is computed at the FO4 (fanout-of-4) operating point:
-    - Load = 4× baseline inverter input capacitance
-    - Slew = baseline inverter output transition at FO4 load
-
-    Example usage:
-        >>> parser = LibertyParser()
-        >>> lib = parser.parse(Path("my_library.lib"))
-        >>> normalizer = INVD1Normalizer(lib)
-        >>> metrics = normalizer.normalize_all()
-        >>> print(metrics["NAND2D1"].delay_ratio)  # e.g., 1.4
+    This class handles the identification of the baseline cell, extraction of its
+    parameters at the FO4 operating point, and the calculation of normalized ratios
+    for all other cells in the library.
     """
 
     def __init__(self, library: LibertyLibrary, baseline_name: Optional[str] = None):
-        """
-        Initialize normalizer with a library.
+        """Initializes the normalizer with a library.
 
         Args:
-            library: Parsed Liberty library
-            baseline_name: Optional specific baseline cell name.
-                          If None, auto-detects INVD1 or equivalent.
+            library: The parsed Liberty library.
+            baseline_name: Optional name of the baseline cell. If not provided,
+                automatic detection is attempted.
+
+        Raises:
+            ValueError: If the baseline cell cannot be found or identified.
         """
         self.library = library
 
@@ -176,14 +172,9 @@ class INVD1Normalizer:
         self.baseline = self._extract_baseline_metrics(self.baseline_cell)
 
     def _extract_baseline_metrics(self, cell: Cell) -> BaselineMetrics:
-        """Extract key metrics from baseline cell using D₀+k linear model.
+        """Extracts key metrics from the baseline cell using the D0+k linear model.
 
-        All values are converted to canonical units:
-        - Time: nanoseconds (ns)
-        - Capacitance: picofarads (pF)
-        
-        The linear delay model D = D₀ + k × Load is extracted using
-        least-squares fitting on the cell's timing LUT.
+        Converts all values to canonical units (ns, pF).
         """
         # Area (typically in um², no conversion needed)
         area = cell.area if cell.area > 0 else 1.0
@@ -191,7 +182,7 @@ class INVD1Normalizer:
         # Extract linear delay model: D = D₀ + k × Load
         # Use FO4 slew as the operating point for model extraction
         d0_raw, k_raw = cell.linear_delay_model(self.fo4_slew)
-        
+
         # Convert to canonical units
         if d0_raw <= 0:
             # Fallback: use FO4 delay as D₀ estimate (conservative)
@@ -201,7 +192,7 @@ class INVD1Normalizer:
             if d0_raw <= 0:
                 d0_raw = 0.01  # 10ps default
             k_raw = 0.0  # Unknown slope
-        
+
         d0 = self.unit_normalizer.normalize_time(d0_raw)
         # k is time/capacitance, so normalize both dimensions
         # k_canonical = k_raw * (time_scale / cap_scale)
@@ -232,26 +223,25 @@ class INVD1Normalizer:
         )
 
     def normalize(self, cell: Cell) -> NormalizedMetrics:
-        """
-        Normalize a single cell to baseline using D₀+k linear delay model.
+        """Normalizes a single cell to the baseline parameters.
 
-        All raw values are converted to canonical units (ns, pF) for comparison.
+        Calculates ratios for area, delay (D0, k), leakage, and capacitance.
 
         Args:
-            cell: Cell to normalize
+            cell: The cell to normalize.
 
         Returns:
-            NormalizedMetrics with D₀ ratio, k ratio, and cell type
+            A NormalizedMetrics object containing the calculated ratios and raw values.
         """
         # Classify cell by logic function
         cell_type = classify_cell(cell)
-        
+
         # Extract raw values and convert to canonical units
         raw_area = cell.area if cell.area > 0 else 0.0
 
         # Extract linear delay model: D = D₀ + k × Load
         d0_raw, k_raw = cell.linear_delay_model(self.fo4_slew)
-        
+
         # Convert to canonical units
         if d0_raw <= 0:
             # Fallback: use delay at FO4 as D₀ estimate
@@ -259,10 +249,10 @@ class INVD1Normalizer:
             if d0_raw <= 0:
                 d0_raw = cell.representative_delay
             k_raw = 0.0
-        
+
         raw_d0_ns = self.unit_normalizer.normalize_time(d0_raw) if d0_raw > 0 else 0.0
         raw_k_ns_per_pf = (
-            self.unit_normalizer.normalize_time(k_raw) / 
+            self.unit_normalizer.normalize_time(k_raw) /
             self.unit_normalizer.normalize_capacitance(1.0)
         ) if k_raw > 0 else 0.0
 
@@ -305,20 +295,21 @@ class INVD1Normalizer:
         )
 
     def normalize_all(self) -> dict[str, NormalizedMetrics]:
-        """
-        Normalize all cells in library.
+        """Normalizes all cells in the library.
 
         Returns:
-            Dictionary mapping cell names to their normalized metrics
+            A dictionary mapping cell names to their NormalizedMetrics.
         """
         return {name: self.normalize(cell) for name, cell in self.library.cells.items()}
 
     def get_summary(self) -> dict:
-        """
-        Get summary statistics for the normalized library.
+        """Generates summary statistics for the normalized library.
+
+        Includes statistical distributions (mean, min, max) of ratios and counts
+        of cell types.
 
         Returns:
-            Dictionary with statistical summaries
+            A dictionary containing the summary statistics.
         """
         metrics = self.normalize_all()
 
@@ -329,7 +320,7 @@ class INVD1Normalizer:
         d0s = [m.d0_ratio for m in metrics.values() if m.d0_ratio > 0]
         ks = [m.k_ratio for m in metrics.values() if m.k_ratio > 0]
         leakages = [m.leakage_ratio for m in metrics.values() if m.leakage_ratio > 0]
-        
+
         # Cell type distribution
         type_counts: dict[str, int] = {}
         for m in metrics.values():
@@ -365,12 +356,9 @@ class INVD1Normalizer:
         }
 
     def export_to_json(self) -> dict:
-        """Export all normalized data as JSON-serializable dict.
+        """Exports all normalized data to a JSON-serializable dictionary.
 
-        All values are in canonical units:
-        - Time: nanoseconds (ns)
-        - Capacitance: picofarads (pF)
-        - Area: um²
+        Includes units, FO4 operating point, baseline metrics, and per-cell normalized data.
         """
         return {
             "library": self.library.name,

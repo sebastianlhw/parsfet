@@ -1,4 +1,9 @@
-"""Liberty (.lib) file data models"""
+"""Liberty (.lib) file data models.
+
+This module defines the Pydantic models for the Liberty format, covering libraries,
+cells, pins, timing arcs, power arcs, and lookup tables. It includes logic for
+interpolation, delay calculation, and linear model fitting.
+"""
 
 from typing import Any, Optional
 
@@ -8,7 +13,16 @@ from .common import OperatingCondition, UnitNormalizer, VtFlavor
 
 
 class LookupTable(BaseModel):
-    """Lookup table for timing/power data (1D or 2D)"""
+    """Represents a 1D or 2D lookup table for timing or power data.
+
+    Liberty uses Non-Linear Delay Models (NLDM) stored as tables indexed by input slew
+    and/or output load.
+
+    Attributes:
+        index_1: List of index values for the first dimension (typically input slew).
+        index_2: List of index values for the second dimension (typically output load).
+        values: The table values. Can be a 1D list or a 2D list (list of lists).
+    """
 
     index_1: list[float] = Field(default_factory=list, description="Input slew values")
     index_2: list[float] = Field(default_factory=list, description="Output load values")
@@ -16,12 +30,12 @@ class LookupTable(BaseModel):
 
     @property
     def is_2d(self) -> bool:
-        """Check if this is a 2D table"""
+        """Returns True if the table is 2D, False otherwise."""
         return bool(self.values and isinstance(self.values[0], list))
 
     @property
     def center_value(self) -> float:
-        """Get center point of the LUT (typical operating point)"""
+        """Returns the value at the center of the table (typical operating point)."""
         if not self.values:
             return 0.0
 
@@ -40,20 +54,17 @@ class LookupTable(BaseModel):
             return float(val) if not isinstance(val, list) else 0.0
 
     def interpolate(self, slew: float, load: Optional[float] = None) -> float:
-        """
-        Interpolate the LUT at the given operating point.
+        """Interpolates the table at the given operating point.
 
-        For 2D tables: bilinear interpolation on (slew, load)
-        For 1D tables: linear interpolation on slew (load ignored)
-
-        Out-of-range values are clamped to the nearest valid point.
+        Uses bilinear interpolation for 2D tables and linear interpolation for 1D tables.
+        Values outside the table indices are clamped to the nearest edge.
 
         Args:
-            slew: Input transition time (index_1)
-            load: Output load capacitance (index_2), only for 2D tables
+            slew: The input transition time (index_1).
+            load: The output load capacitance (index_2). Required for 2D tables.
 
         Returns:
-            Interpolated value at the operating point
+            The interpolated value.
         """
         if not self.values:
             return 0.0
@@ -64,7 +75,7 @@ class LookupTable(BaseModel):
             return self._interpolate_1d(slew)
 
     def _interpolate_1d(self, x: float) -> float:
-        """Linear interpolation on 1D table with clamping"""
+        """Performs linear interpolation on a 1D table with clamping."""
         if not self.index_1 or not self.values:
             return self.center_value
 
@@ -87,7 +98,7 @@ class LookupTable(BaseModel):
         return y0 + t * (y1 - y0)
 
     def _interpolate_2d(self, slew: float, load: float) -> float:
-        """Bilinear interpolation on 2D table with clamping"""
+        """Performs bilinear interpolation on a 2D table with clamping."""
         if not self.index_1 or not self.index_2 or not self.values:
             return self.center_value
 
@@ -132,25 +143,25 @@ class LookupTable(BaseModel):
 
     @staticmethod
     def _find_bracket(arr: list[float], val: float) -> int:
-        """Find index i such that arr[i] <= val < arr[i+1]"""
+        """Finds index i such that arr[i] <= val < arr[i+1]."""
         for i in range(len(arr) - 1):
             if arr[i] <= val < arr[i + 1]:
                 return i
         return len(arr) - 2 if arr else 0
 
     def fit_linear_model(self, slew: float) -> tuple[float, float]:
-        """
-        Fit linear delay model: D = D₀ + k × Load
+        """Fits a linear delay model: D = D0 + k * Load.
 
-        At a fixed input slew, extracts the delay vs load relationship.
+        At a fixed input slew, this method extracts the delay vs. load relationship
+        using linear regression on the table data.
 
         Args:
-            slew: Input slew to use for fitting
+            slew: The input slew value to use for fitting.
 
         Returns:
-            (intrinsic_delay, load_slope) tuple where:
-            - intrinsic_delay: D₀ (delay at zero load)
-            - load_slope: k (delay increase per unit load)
+            A tuple (intrinsic_delay, load_slope), where:
+            - intrinsic_delay (D0): The delay at zero load.
+            - load_slope (k): The delay increase per unit load (logical effort factor).
         """
         if not self.is_2d or not self.index_2 or len(self.index_2) < 2:
             # 1D table or insufficient data
@@ -179,7 +190,19 @@ class LookupTable(BaseModel):
 
 
 class Pin(BaseModel):
-    """Cell pin definition"""
+    """Represents a pin definition for a cell.
+
+    Attributes:
+        name: The pin name.
+        direction: Direction of signal flow (input, output, inout).
+        capacitance: Input capacitance in pF.
+        max_capacitance: Maximum load capacitance allowed.
+        min_capacitance: Minimum load capacitance.
+        function: Boolean function expression (for output pins).
+        clock: True if the pin is a clock pin.
+        rise_capacitance: Capacitance for rising transitions.
+        fall_capacitance: Capacitance for falling transitions.
+    """
 
     name: str
     direction: str = "input"  # "input", "output", "inout"
@@ -197,7 +220,22 @@ class Pin(BaseModel):
 
 
 class TimingArc(BaseModel):
-    """Timing arc from related_pin to output"""
+    """Represents a timing arc from a related pin to an output pin.
+
+    Defines the timing relationship (delay, transition time) between an input
+    transition and the resulting output transition.
+
+    Attributes:
+        related_pin: The name of the input pin causing the transition.
+        timing_sense: The logic sense (positive_unate, negative_unate, non_unate).
+        timing_type: The type of timing check (combinational, setup, hold, etc.).
+        cell_rise: Lookup table for propagation delay (output rising).
+        cell_fall: Lookup table for propagation delay (output falling).
+        rise_transition: Lookup table for output transition time (rising).
+        fall_transition: Lookup table for output transition time (falling).
+        rise_constraint: Lookup table for constraint time (rising).
+        fall_constraint: Lookup table for constraint time (falling).
+    """
 
     related_pin: str
     timing_sense: str = "positive_unate"  # positive_unate, negative_unate, non_unate
@@ -217,7 +255,11 @@ class TimingArc(BaseModel):
 
     @property
     def representative_delay(self) -> float:
-        """Get a representative delay value (average of rise/fall center points)"""
+        """Calculates a single representative delay value for the arc.
+
+        Useful for high-level sorting or comparison. It averages the center values
+        of the rise and fall delay tables.
+        """
         delays = []
         if self.cell_rise:
             delays.append(self.cell_rise.center_value)
@@ -226,10 +268,9 @@ class TimingArc(BaseModel):
         return sum(delays) / len(delays) if delays else 0.0
 
     def delay_at(self, slew: float, load: float) -> float:
-        """
-        Get delay at specific operating point (slew, load).
+        """Calculates the delay at a specific operating point (slew, load).
 
-        Returns average of rise and fall delays interpolated at the given point.
+        Returns the average of rise and fall delays interpolated at the given point.
         """
         delays = []
         if self.cell_rise:
@@ -239,10 +280,9 @@ class TimingArc(BaseModel):
         return sum(delays) / len(delays) if delays else 0.0
 
     def output_transition_at(self, slew: float, load: float) -> float:
-        """
-        Get output transition at specific operating point.
+        """Calculates the output transition time at a specific operating point.
 
-        Returns average of rise and fall transitions interpolated at the given point.
+        Returns the average of rise and fall output transitions.
         """
         trans = []
         if self.rise_transition:
@@ -252,16 +292,15 @@ class TimingArc(BaseModel):
         return sum(trans) / len(trans) if trans else slew  # Fallback to input slew
 
     def linear_delay_model(self, slew: float) -> tuple[float, float]:
-        """
-        Extract linear delay model: D = D₀ + k × Load
+        """Extracts a linear delay model: D = D0 + k * Load.
 
-        Averages rise and fall linear models.
+        Averages the linear models derived from the cell_rise and cell_fall tables.
 
         Args:
-            slew: Input slew for model extraction
+            slew: The input slew value for model extraction.
 
         Returns:
-            (intrinsic_delay, load_slope) tuple
+            A tuple (intrinsic_delay, load_slope).
         """
         models = []
         if self.cell_rise:
@@ -280,7 +319,14 @@ class TimingArc(BaseModel):
 
 
 class PowerArc(BaseModel):
-    """Power consumption arc"""
+    """Represents a power consumption arc.
+
+    Attributes:
+        related_pin: The pin related to the power event.
+        when: Condition expression for when this power applies.
+        rise_power: Lookup table for power during rising transition.
+        fall_power: Lookup table for power during falling transition.
+    """
 
     related_pin: Optional[str] = None
     when: Optional[str] = None  # Condition expression
@@ -292,7 +338,21 @@ class PowerArc(BaseModel):
 
 
 class Cell(BaseModel):
-    """Standard cell definition"""
+    """Represents a standard cell definition.
+
+    Attributes:
+        name: The name of the cell (e.g., "NAND2_X1").
+        area: The area of the cell in square micrometers.
+        cell_leakage_power: The leakage power in nanowatts.
+        leakage_power_values: List of conditional leakage power values.
+        pins: Dictionary of pins keyed by name.
+        timing_arcs: List of timing arcs.
+        power_arcs: List of power arcs.
+        dont_use: Flag indicating the cell should not be used for synthesis.
+        dont_touch: Flag indicating the cell should not be modified.
+        is_sequential: True if the cell contains state elements (FF, Latch).
+        attributes: Additional unparsed attributes.
+    """
 
     name: str
     area: float = Field(default=0.0, description="Cell area in um²")
@@ -318,53 +378,51 @@ class Cell(BaseModel):
     @computed_field
     @property
     def input_pins(self) -> list[str]:
-        """List of input pin names"""
+        """Returns a list of names of all input pins."""
         return [name for name, pin in self.pins.items() if pin.direction == "input"]
 
     @computed_field
     @property
     def output_pins(self) -> list[str]:
-        """List of output pin names"""
+        """Returns a list of names of all output pins."""
         return [name for name, pin in self.pins.items() if pin.direction == "output"]
 
     @property
     def total_input_capacitance(self) -> float:
-        """Sum of all input pin capacitances"""
+        """Sum of all input pin capacitances."""
         return sum(pin.capacitance or 0.0 for pin in self.pins.values() if pin.direction == "input")
 
     @property
     def representative_delay(self) -> float:
-        """Get representative delay across all timing arcs"""
+        """Calculates a representative delay across all timing arcs.
+
+        Useful for sorting or rough comparisons.
+        """
         delays = [
             arc.representative_delay for arc in self.timing_arcs if arc.representative_delay > 0
         ]
         return sum(delays) / len(delays) if delays else 0.0
 
     def delay_at(self, slew: float, load: float) -> float:
-        """Get average delay across all timing arcs at specific operating point"""
+        """Calculates average delay across all timing arcs at specific operating point."""
         delays = [arc.delay_at(slew, load) for arc in self.timing_arcs]
         delays = [d for d in delays if d > 0]
         return sum(delays) / len(delays) if delays else 0.0
 
     def output_transition_at(self, slew: float, load: float) -> float:
-        """Get average output transition across all timing arcs at specific operating point"""
+        """Calculates average output transition across all arcs at specific operating point."""
         trans = [arc.output_transition_at(slew, load) for arc in self.timing_arcs]
         trans = [t for t in trans if t > 0]
         return sum(trans) / len(trans) if trans else slew
 
     def linear_delay_model(self, slew: float) -> tuple[float, float]:
-        """
-        Extract linear delay model: D = D₀ + k × Load
-
-        Averages linear models from all timing arcs.
+        """Extracts a linear delay model averaged across all timing arcs.
 
         Args:
-            slew: Input slew for model extraction
+            slew: Input slew for model extraction.
 
         Returns:
-            (intrinsic_delay, load_slope) tuple where:
-            - intrinsic_delay: D₀ (delay at zero load)
-            - load_slope: k (delay increase per unit load)
+            A tuple (intrinsic_delay, load_slope).
         """
         models = [arc.linear_delay_model(slew) for arc in self.timing_arcs]
         models = [(d0, k) for d0, k in models if d0 > 0 or k > 0]
@@ -380,7 +438,28 @@ class Cell(BaseModel):
 
 
 class LibertyLibrary(BaseModel):
-    """Complete Liberty library"""
+    """Represents a complete Liberty library.
+
+    Contains library-level attributes, operating conditions, lookup table templates,
+    and the collection of cells.
+
+    Attributes:
+        name: Library name.
+        technology: Technology name (e.g., "cmos").
+        delay_model: Delay model used (e.g., "table_lookup").
+        time_unit: Time unit string (e.g., "1ns").
+        capacitive_load_unit: Capacitance unit tuple (multiplier, unit).
+        nom_voltage: Nominal voltage.
+        nom_temperature: Nominal temperature.
+        nom_process: Nominal process scaling.
+        operating_conditions: Defined operating conditions.
+        vt_flavor: Threshold voltage flavor (SVT, LVT, etc.).
+        process_node: Process node string.
+        foundry: Foundry name.
+        lu_table_templates: Dictionary of LUT templates.
+        cells: Dictionary of cells keyed by name.
+        attributes: Additional unparsed attributes.
+    """
 
     name: str
 
@@ -418,8 +497,7 @@ class LibertyLibrary(BaseModel):
 
     @property
     def unit_normalizer(self) -> UnitNormalizer:
-        """
-        Get a UnitNormalizer configured for this library's units.
+        """Returns a UnitNormalizer configured for this library's units.
 
         Use this to convert values to canonical units (ns, pF) for cross-library comparison.
         """
@@ -427,9 +505,13 @@ class LibertyLibrary(BaseModel):
 
     @property
     def baseline_cell(self) -> Optional[Cell]:
-        """
-        Return INVD1 or equivalent baseline inverter.
-        This is the fundamental reference cell for normalization.
+        """Identifies and returns the baseline inverter (INVD1) for normalization.
+
+        The baseline inverter is the fundamental reference for logical effort calculations.
+        It searches for standard names (INVD1, INV_X1) or infers based on area/function.
+
+        Returns:
+            The Cell object for the baseline inverter, or None if not found.
         """
         # Try common inverter names in order of preference
         inv_names = [
@@ -474,24 +556,25 @@ class LibertyLibrary(BaseModel):
 
     @property
     def cell_count(self) -> int:
+        """Returns the total number of cells in the library."""
         return len(self.cells)
 
     def get_cells_by_function(self, pattern: str) -> list[Cell]:
-        """Get cells matching a function pattern (e.g., 'NAND', 'NOR', 'DFF')"""
+        """Returns a list of cells whose names match a pattern (e.g., 'NAND')."""
         pattern_upper = pattern.upper()
         return [cell for name, cell in self.cells.items() if pattern_upper in name.upper()]
 
     @property
     def fo4_operating_point(self) -> tuple[float, float]:
-        """
-        Compute FO4 (fanout-of-4) operating point for this library.
+        """Computes the FO4 (fanout-of-4) operating point for this library.
+
+        The FO4 delay is a process-independent metric. This method determines the
+        slew and load conditions corresponding to an inverter driving 4 identical inverters.
 
         Returns:
-            (typical_slew, typical_load) tuple where:
-            - typical_load = 4× baseline inverter input capacitance
+            A tuple (typical_slew, typical_load) where:
+            - typical_load = 4 * baseline inverter input capacitance
             - typical_slew = baseline inverter output transition at FO4 load
-
-        This provides a self-consistent, physically meaningful operating point.
         """
         baseline = self.baseline_cell
         if not baseline:

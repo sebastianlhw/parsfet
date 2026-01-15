@@ -1,9 +1,8 @@
-"""
-Liberty JSON Parser
+"""Liberty JSON Parser.
 
-Parses the JSON representation of Liberty files used by SkyWater PDK.
-These files store cell-level timing data in JSON format rather than
-raw Liberty syntax.
+Parses the JSON representation of Liberty files, specifically tailored for the
+SkyWater PDK format. This format separates timing data into individual JSON files
+per cell, offering a more granular approach than monolithic .lib files.
 """
 
 import json
@@ -17,23 +16,35 @@ from .base import BaseParser
 
 
 class LibertyJSONParser(BaseParser[LibertyLibrary]):
-    """
-    Parser for Liberty JSON format (.lib.json) used by SkyWater PDK.
+    """Parser for Liberty JSON format (.lib.json) used by SkyWater PDK.
 
-    This format stores cell data as JSON objects with keys like:
-    - "area": 3.7536
-    - "pin,A": { "direction": "input", "capacitance": 0.002302 }
-    - "pin,Y": { "direction": "output", "timing": { ... } }
+    Handles the JSON structure where cell attributes and timing arcs are stored
+    as key-value pairs (e.g., "pin,A": {...}).
     """
 
     def parse(self, path: Path) -> LibertyLibrary:
-        """Parse a single cell JSON file"""
+        """Parses a single cell JSON file.
+
+        Args:
+            path: Path to the JSON file.
+
+        Returns:
+            A LibertyLibrary object containing the single parsed cell.
+        """
         content = self._read_file(path, encoding="utf-8")
         name = path.name.split(".")[0]
         return self.parse_string(content, name)
 
     def parse_string(self, content: str, name: str = "unknown") -> LibertyLibrary:
-        """Parse JSON content as a single-cell library"""
+        """Parses JSON content as a single-cell library.
+
+        Args:
+            content: JSON string content.
+            name: Name for the library/cell.
+
+        Returns:
+            A LibertyLibrary object containing the parsed cell.
+        """
         data = json.loads(content)
 
         library = LibertyLibrary(name=name)
@@ -43,19 +54,17 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         return library
 
     def parse_library_dir(self, path: Path, corner: str = "tt_025C_1v80") -> LibertyLibrary:
-        """
-        Parse a SkyWater PDK library directory.
+        """Parses a complete library directory (e.g., SkyWater PDK style).
 
-        Structure expected:
-            path/
-                timing/
-                    sky130_fd_sc_hd__tt_025C_1v80.lib.json  # library header
-                cells/
-                    inv/
-                        sky130_fd_sc_hd__inv_1__tt_025C_1v80.lib.json
-                        sky130_fd_sc_hd__inv_2__tt_025C_1v80.lib.json
-                    nand2/
-                        sky130_fd_sc_hd__nand2_1__tt_025C_1v80.lib.json
+        Expects a directory structure with a 'timing' folder for headers and a 'cells'
+        folder containing subdirectories for each cell type.
+
+        Args:
+            path: Path to the library root directory.
+            corner: The specific PVT corner to parse (e.g., "tt_025C_1v80").
+
+        Returns:
+            A populated LibertyLibrary object containing all found cells for the corner.
         """
         # Determine library name from path
         lib_name = path.name
@@ -106,7 +115,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         return library
 
     def _build_cell(self, data: dict[str, Any], name: str) -> Cell:
-        """Build Cell from JSON data"""
+        """Builds a Cell object from JSON data."""
         cell = Cell(
             name=name,
             area=data.get("area", 0.0),
@@ -164,7 +173,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         return cell
 
     def _build_pin(self, data: dict[str, Any], name: str) -> Pin:
-        """Build Pin from JSON data"""
+        """Builds a Pin object from JSON data."""
         return Pin(
             name=name,
             direction=data.get("direction", "input"),
@@ -179,7 +188,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         )
 
     def _build_timing_arc(self, data: dict[str, Any]) -> TimingArc:
-        """Build TimingArc from JSON timing data"""
+        """Builds a TimingArc object from JSON timing data."""
         arc = TimingArc(
             related_pin=data.get("related_pin", ""),
             timing_sense=data.get("timing_sense", "positive_unate"),
@@ -207,7 +216,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         return arc
 
     def _build_power_arc(self, data: dict[str, Any]) -> PowerArc:
-        """Build PowerArc from JSON internal_power data"""
+        """Builds a PowerArc object from JSON internal_power data."""
         arc = PowerArc(
             related_pin=data.get("related_pin"),
         )
@@ -224,7 +233,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         return arc
 
     def _build_lut(self, data: dict[str, Any]) -> LookupTable:
-        """Build LookupTable from JSON data"""
+        """Builds a LookupTable object from JSON data."""
         return LookupTable(
             index_1=data.get("index_1", []),
             index_2=data.get("index_2", []),
@@ -232,7 +241,10 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         )
 
     def validate(self, data: LibertyLibrary) -> list[str]:
-        """Validate parsed library"""
+        """Validates the parsed library.
+
+        Checks for basic validity like presence of cells and baseline inverter.
+        """
         warnings = []
 
         if not data.cells:
