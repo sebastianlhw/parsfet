@@ -21,6 +21,7 @@ from .base import BaseParser
 
 
 class LibertyParser(BaseParser[LibertyLibrary]):
+    _CAP_UNIT_RE = re.compile(r"[,\s]+")
     """
     Parser for Liberty (.lib) timing files.
 
@@ -565,7 +566,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
             return (float(value[0]), str(value[1]).strip("\"'"))
         if isinstance(value, str):
             # Try to parse "1,pf" or similar
-            parts = re.split(r"[,\s]+", value.strip("\"'"))
+            parts = self._CAP_UNIT_RE.split(value.strip("\"'"))
             if len(parts) >= 2:
                 try:
                     return (float(parts[0]), parts[1])

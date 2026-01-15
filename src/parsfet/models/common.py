@@ -1,5 +1,6 @@
 """Common type definitions shared across all models"""
 
+import re
 from enum import Enum
 from typing import Optional
 
@@ -68,6 +69,9 @@ CANONICAL_CAP_UNIT = "pf"
 CANONICAL_LENGTH_UNIT = "um"
 
 
+TIME_UNIT_RE = re.compile(r"([\d.]+)\s*(ns|ps|fs)")
+
+
 def parse_time_unit(unit_str: str) -> float:
     """
     Parse Liberty time_unit string and return multiplier to convert to nanoseconds.
@@ -80,9 +84,7 @@ def parse_time_unit(unit_str: str) -> float:
     unit_str = unit_str.strip().strip("\"'").lower()
 
     # Parse formats like "1ns", "1ps", "100ps"
-    import re
-
-    match = re.match(r"([\d.]+)\s*(ns|ps|fs)", unit_str)
+    match = TIME_UNIT_RE.match(unit_str)
     if match:
         value = float(match.group(1))
         unit = match.group(2)
@@ -99,6 +101,9 @@ def parse_time_unit(unit_str: str) -> float:
     return 1.0  # Default ns
 
 
+CAP_UNIT_RE = re.compile(r"([\d.]+)\s*,?\s*(pf|ff|af)")
+
+
 def parse_cap_unit(cap_spec) -> float:
     """
     Parse Liberty capacitive_load_unit and return multiplier to convert to picofarads.
@@ -113,9 +118,7 @@ def parse_cap_unit(cap_spec) -> float:
         value = float(cap_spec[0])
         unit = cap_spec[1].strip().strip("\"'").lower()
     elif isinstance(cap_spec, str):
-        import re
-
-        match = re.match(r"([\d.]+)\s*,?\s*(pf|ff|af)", cap_spec.lower())
+        match = CAP_UNIT_RE.match(cap_spec.lower())
         if match:
             value = float(match.group(1))
             unit = match.group(2)
