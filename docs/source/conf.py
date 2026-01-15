@@ -21,6 +21,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
+    'sphinx_copybutton',
 ]
 
 templates_path = ['_templates']
@@ -31,5 +32,14 @@ exclude_patterns = []
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'furo'
 html_static_path = ['_static']
+html_css_files = [
+    'css/custom.css',
+]
+
+html_theme_options = {
+    # Keep it minimal
+    "sidebar_hide_name": False,
+    "top_of_page_button": "edit",
+}
