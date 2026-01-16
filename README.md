@@ -2,8 +2,8 @@
 
 <img src="docs/source/_static/logo.png" width="640">
 
-Mint-Pars-FET is a fresh, Pythonic technology file parser designed to turn messy, layered PDK specifications into clean, digestible data structures.
-A Python-based framework for parsing semiconductor technology files (`.lib`, `.lef`, `.techlef`, `.ict`) and enabling cross-process comparison and ML analysis.
+The *parfait* way to parse technology input files into structured data.
+A Python-based framework for parsing semiconductor technology files (`.lib`, `.lef`, `.techlef`) and enabling cross-process comparison and ML analysis.
 
 ## Key Features
 
