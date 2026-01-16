@@ -56,7 +56,12 @@ def detect_format(path: Path, forced_format: Optional[str] = None) -> str:
         return "ict"
     else:
         # Try to detect from content
-        content = path.read_text(encoding="utf-8", errors="replace")[:1000]
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read(1000)
+        except OSError:
+            return "unknown"
+
         if "library" in content.lower() and "cell" in content.lower():
             return "lib"
         elif "LAYER" in content or "MACRO" in content:
