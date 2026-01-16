@@ -394,8 +394,8 @@ def compare(
             f"\n[bold]Fingerprint Similarity:[/] {fp_comparison['similarity']['cosine']:.3f}"
         )
 
-        if fp_a.baseline_delay > 0 and fp_b.baseline_delay > 0:
-            speed_ratio = fp_a.baseline_delay / fp_b.baseline_delay
+        if fp_a.baseline_d0 > 0 and fp_b.baseline_d0 > 0:
+            speed_ratio = fp_a.baseline_d0 / fp_b.baseline_d0
             if speed_ratio > 1:
                 console.print(f"[bold]Speed:[/] {b.name} is {speed_ratio:.2f}x faster")
             else:
@@ -452,7 +452,7 @@ def fingerprint(
             f"[bold]Baseline Cell:[/] {fp.baseline_cell or 'N/A'}\n\n"
             f"[bold]Baseline Metrics:[/]\n"
             f"  Area: {fp.baseline_area:.4f} um²\n"
-            f"  Delay: {fp.baseline_delay:.4f} ns\n"
+            f"  Delay: {fp.baseline_d0:.4f} ns\n"
             f"  Leakage: {fp.baseline_leakage:.4f} nW\n\n"
             f"[bold]Cell Counts:[/]\n"
             f"  Total: {fp.total_cells}\n"
