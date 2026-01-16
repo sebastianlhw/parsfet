@@ -85,6 +85,37 @@ If you want to feed library data into a machine learning model, you can't just d
 
 This creates a signature based on the statistical distribution of the normalized metrics. It turns the entire library into a compact vector that captures its essence (drive strength diversity, logic depth, etc.).
 
+Combine Multiple Libraries
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Sometimes your cells are spread across multiple files. Maybe you have LVT, RVT, and HVT variants in separate libraries. Maybe your standard cells are in one file and your IO cells in another.
+
+The ``combine`` command merges them into one unified dataset:
+
+.. code-block:: bash
+
+   parsfet combine lvt.lib rvt.lib hvt.lib --output combined.json
+
+What happens under the hood:
+
+1. All files are parsed and their cells pooled together
+2. A baseline inverter is found from the *combined* cell pool
+3. *Every* cell is normalized against that single baseline
+
+This gives you a consistent reference point. An RVT inverter might show ``d0_ratio = 1.26``—meaning it's 26% slower than the LVT baseline. This is the kind of comparison that matters when you're choosing cells for a mixed-Vt design.
+
+**Duplicate Detection**: If two files define the same cell name, the command stops and tells you. You can override with ``--allow-duplicates`` (first occurrence wins) or use ``--check-duplicates`` to just see the conflicts:
+
+.. code-block:: bash
+
+   # Check first
+   parsfet combine *.lib --check-duplicates
+
+   # Force it (first wins)
+   parsfet combine lvt.lib rvt.lib --allow-duplicates -o merged.json
+
+**Source Tracking**: The output JSON and DataFrame include a ``source_file`` field so you always know where each cell came from.
+
 Python API
 ----------
 
@@ -129,18 +160,42 @@ For combined physical + timing analysis, use the ``Dataset`` class:
    df = ds.to_dataframe()
    print(df[["cell", "area_ratio", "lef_width", "lef_height"]].head())
 
-   # Access physical data directly
-   entry = ds.entries[0]
-   for cell_name, lef_cell in entry.lef_cells.items():
-       print(f"{cell_name}: {lef_cell.width} x {lef_cell.height} um")
-       for pin_name, pin in lef_cell.pins.items():
-           print(f"  {pin_name}: {pin.direction}, use={pin.use}, layers={pin.layers}")
+Multi-File Combining (Grand Dataset)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The JSON export includes technology layer info:
+When you have cells spread across multiple files, load them all and call ``combine()``:
 
 .. code-block:: python
 
-   data = ds.export_to_json()
-   for layer_name, layer in data["technology"]["layers"].items():
-       print(f"{layer_name}: min_size={layer['min_size_um']} um")
+   from parsfet.data import Dataset
 
+   ds = Dataset()
+
+   # Load multiple libraries (delay normalization)
+   ds.load_files(["lvt.lib", "rvt.lib", "hvt.lib"], normalize=False)
+
+   # Check for duplicate cell names
+   duplicates = ds.find_duplicates()
+   if duplicates:
+       print(f"Found {len(duplicates)} duplicates")
+
+   # Combine into one grand dataset
+   combined = ds.combine(allow_duplicates=True)
+
+   # Now you have unified normalization
+   df = combined.to_dataframe()
+
+   # Compare LVT vs RVT inverters
+   inv_df = df[df["cell"].str.contains("INVx1")]
+   print(inv_df[["cell", "d0_ratio", "source_file"]])
+
+The key insight: after ``combine()``, every cell is normalized to the same baseline. This makes cross-library comparisons meaningful. The ``source_file`` column tells you where each cell originated.
+
+**Architecture**:
+
+1. ``load_files(..., normalize=False)`` — Parse only, don't normalize yet
+2. ``find_duplicates()`` — Detect naming conflicts
+3. ``combine()`` — Merge cells, find unified baseline, normalize all
+4. ``to_dataframe()`` / ``save_json()`` — Work with the combined data
+
+If you try to combine files with duplicate cell names (same name, different files), it raises ``DuplicateCellError`` unless you pass ``allow_duplicates=True``.
