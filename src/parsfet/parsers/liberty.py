@@ -25,11 +25,14 @@ class LibertyParser(BaseParser[LibertyLibrary]):
     Implements a recursive descent parser to handle the nested structure of Liberty files.
     """
 
-    def __init__(self):
-        """Initializes the LibertyParser."""
-        self._pos = 0
-        self._tokens: list[str] = []
-        self._length = 0
+    # Pre-compiled token pattern for Liberty format
+    _TOKEN_PATTERN = re.compile(r"""
+        "(?:[^"\\]|\\.)*"             # Quoted string (with escapes)
+        |'(?:[^'\\]|\\.)*'            # Single-quoted string
+        |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number
+        |[a-zA-Z_][a-zA-Z0-9_\.\[\]]*  # Identifier (including array notation)
+        |[{}();:,\\]                   # Punctuation
+    """, re.VERBOSE)
 
     def parse(self, path: Path) -> LibertyLibrary:
         """Parses a Liberty file from a given path.
@@ -58,10 +61,8 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         # Preprocess: remove comments
         content = self._remove_comments(content)
 
-        # Tokenize
-        self._tokens = self._tokenize(content)
-        self._pos = 0
-        self._length = len(self._tokens)
+        # Tokenize and initialize token stream
+        self._init_tokens(self._tokenize(content))
 
         # Parse top-level library group
         if self._length == 0:
@@ -81,44 +82,8 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         return content
 
     def _tokenize(self, content: str) -> list[str]:
-        """Converts the content string into a stream of tokens.
-
-        Tokens include:
-        - Identifiers: [a-zA-Z_][a-zA-Z0-9_]*
-        - Quoted strings: "..." or '...'
-        - Numbers: -?[0-9]+.?[0-9]*([eE][+-]?[0-9]+)?
-        - Punctuation: { } ( ) ; : , \\
-        """
-        # Pattern matches tokens in order of precedence
-        pattern = r"""
-            "(?:[^"\\]|\\.)*"         # Quoted string (with escapes)
-            |'(?:[^'\\]|\\.)*'        # Single-quoted string
-            |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number (before identifier to catch negative numbers)
-            |[a-zA-Z_][a-zA-Z0-9_\.\[\]]*  # Identifier (including array notation)
-            |[{}();:,\\]              # Punctuation
-        """
-        tokens = re.findall(pattern, content, re.VERBOSE)
-        return tokens
-
-    def _peek(self, offset: int = 0) -> Optional[str]:
-        """Looks ahead at the token at the given offset without consuming it."""
-        idx = self._pos + offset
-        return self._tokens[idx] if idx < self._length else None
-
-    def _consume(self) -> Optional[str]:
-        """Consumes and returns the current token."""
-        if self._pos >= self._length:
-            return None
-        token = self._tokens[self._pos]
-        self._pos += 1
-        return token
-
-    def _expect(self, expected: str) -> str:
-        """Consumes the current token and verifies it matches the expected value."""
-        token = self._consume()
-        if token != expected:
-            raise ValueError(f"Expected '{expected}', got '{token}' at position {self._pos}")
-        return token
+        """Converts the content string into a stream of tokens using pre-compiled pattern."""
+        return self._TOKEN_PATTERN.findall(content)
 
     def _skip_to(self, target: str) -> None:
         """Skips tokens until the target token is found (consumes the target)."""

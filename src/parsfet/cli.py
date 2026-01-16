@@ -514,5 +514,128 @@ def export(
     console.print(f"[green]Exported {len(lib.cells)} cells to:[/green] {output}")
 
 
+@app.command()
+def combine(
+    lib_files: list[Path] = typer.Argument(..., help="Liberty files to combine"),
+    lef: Optional[list[Path]] = typer.Option(None, "--lef", "-l", help="LEF file(s) for physical data"),
+    tech_lef: Optional[Path] = typer.Option(None, "--tech-lef", "-t", help="TechLEF file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
+    check_duplicates: bool = typer.Option(False, "--check-duplicates", help="Only report duplicates, don't output"),
+    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicates (first wins)"),
+):
+    """Combines multiple Liberty files into one unified dataset.
+
+    This command merges cells from multiple .lib files into a single dataset
+    with unified normalization. A baseline inverter is found from the combined
+    cell pool, and ALL cells are normalized against this single baseline.
+
+    By default, an error is raised if duplicate cell names are found across files.
+    Use --allow-duplicates to proceed (first occurrence wins) or --check-duplicates
+    to just report duplicates without generating output.
+
+    Args:
+        lib_files: One or more Liberty (.lib) files to combine.
+        lef: Optional. LEF files for physical cell data.
+        tech_lef: Optional. TechLEF file for technology rules.
+        output: Optional. Path to save the combined JSON output.
+        check_duplicates: If True, only check for duplicates and report.
+        allow_duplicates: If True, allow duplicate cells (first wins).
+
+    Examples:
+        # Combine two libraries
+        $ parsfet combine lib1.lib lib2.lib --output combined.json
+
+        # Check for duplicates first
+        $ parsfet combine *.lib --check-duplicates
+
+        # Force combine with duplicates
+        $ parsfet combine lib1.lib lib2.lib --allow-duplicates -o merged.json
+    """
+    from .data import Dataset
+    from .exceptions import DuplicateCellError
+
+    # Validate files exist
+    for f in lib_files:
+        if not f.exists():
+            console.print(f"[red]Error:[/red] File not found: {f}")
+            raise typer.Exit(1)
+
+    # Load files without immediate normalization
+    ds = Dataset()
+    ds.load_files(lib_files, normalize=False)
+
+    console.print(f"[blue]Loaded {len(ds.entries)} libraries:[/blue]")
+    total_cells = 0
+    for entry in ds.entries:
+        cell_count = len(entry.library.cells)
+        total_cells += cell_count
+        console.print(f"  • {entry.library.name}: {cell_count} cells")
+
+    # Check for duplicates
+    duplicates = ds.find_duplicates()
+    if duplicates:
+        console.print(f"\n[yellow]Found {len(duplicates)} duplicate cell(s):[/yellow]")
+        for cell, sources in list(duplicates.items())[:10]:  # Show first 10
+            files = ", ".join(s.name for _, s in sources)
+            console.print(f"  • {cell}: {files}")
+        if len(duplicates) > 10:
+            console.print(f"  ... and {len(duplicates) - 10} more")
+
+        if check_duplicates:
+            console.print("\n[blue]Use --allow-duplicates to proceed with first-occurrence-wins.[/blue]")
+            raise typer.Exit(0)
+
+        if not allow_duplicates:
+            console.print("\n[red]Error:[/red] Duplicate cells found. Use --allow-duplicates to proceed.")
+            raise typer.Exit(1)
+
+    # Combine with unified normalization
+    try:
+        combined = ds.combine(allow_duplicates=allow_duplicates)
+    except DuplicateCellError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    # Load LEF/TechLEF if provided
+    if lef:
+        for lef_path in lef:
+            if not lef_path.exists():
+                console.print(f"[red]Error:[/red] LEF file not found: {lef_path}")
+                raise typer.Exit(1)
+        combined.load_lef(lef)
+        console.print(f"[blue]Loaded LEF:[/blue] {len(lef)} file(s)")
+
+    if tech_lef:
+        if not tech_lef.exists():
+            console.print(f"[red]Error:[/red] TechLEF file not found: {tech_lef}")
+            raise typer.Exit(1)
+        combined.load_tech_lef(tech_lef)
+        console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
+
+    # Display summary
+    entry = combined.entries[0]
+    baseline_name = entry.normalizer.baseline_cell.name if entry.normalizer else "N/A"
+
+    console.print(
+        Panel.fit(
+            f"[bold green]Combined Dataset[/]\n"
+            f"[bold]Total Cells:[/] {len(entry.library.cells)}\n"
+            f"[bold]Baseline:[/] {baseline_name}\n"
+            f"[bold]Source Files:[/] {len(lib_files)}",
+            title="Combine Summary",
+        )
+    )
+
+    # Save output
+    if output:
+        combined.save_json(output)
+        console.print(f"[green]Saved to:[/green] {output}")
+    elif not check_duplicates:
+        console.print("[yellow]Tip:[/yellow] Use --output to save the combined data.")
+
+
 if __name__ == "__main__":
     app()

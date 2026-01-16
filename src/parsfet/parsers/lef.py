@@ -19,9 +19,19 @@ from .base import BaseParser
 class LEFParser(BaseParser[LEFLibrary]):
     """Parser for LEF (Library Exchange Format) files.
 
-    Capable of parsing both technology definitions (layers, vias, sites) and
-    physical macro definitions (cells, pins, obstructions).
+    Implements a recursive descent parser using tokenization, matching
+    the architecture of LibertyParser for consistency and maintainability.
     """
+
+    # Pre-compiled token pattern for lexing
+    _TOKEN_PATTERN = re.compile(r"""
+        "(?:[^"\\]|\\.)*"             # Double-quoted string
+        |'(?:[^'\\]|\\.)*'            # Single-quoted string
+        |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number
+        |[a-zA-Z_][a-zA-Z0-9_\.\[\]]*  # Identifier
+        |[;()]                         # Punctuation
+    """, re.VERBOSE)
+
 
     def parse(self, path: Path) -> LEFLibrary:
         """Parses a LEF file from a given path.
@@ -49,58 +59,144 @@ class LEFParser(BaseParser[LEFLibrary]):
         # Preprocess: remove comments
         content = self._remove_comments(content)
 
+        # Tokenize and initialize token stream
+        self._init_tokens(self._tokenize(content))
+
         library = LEFLibrary()
 
-        # Parse version
-        version_match = re.search(r"VERSION\s+([\d.]+)\s*;", content)
-        if version_match:
-            library.version = version_match.group(1)
+        # Parse top-level statements
+        while self._pos < self._length:
+            token = self._peek()
 
-        # Parse units
-        units_match = re.search(r"UNITS\s+DATABASE\s+MICRONS\s+(\d+)\s*;", content)
-        if units_match:
-            library.units_database = int(units_match.group(1))
+            if token is None:
+                break
 
-        # Parse manufacturing grid
-        grid_match = re.search(r"MANUFACTURINGGRID\s+([\d.]+)\s*;", content)
-        if grid_match:
-            library.manufacturing_grid = float(grid_match.group(1))
+            token_upper = token.upper()
 
-        # Parse layers
-        library.layers = self._parse_layers(content)
+            if token_upper == "VERSION":
+                self._consume()
+                library.version = self._consume()
+                self._skip_semicolon()
 
-        # Parse vias
-        library.vias = self._parse_vias(content)
+            elif token_upper == "UNITS":
+                self._consume()
+                self._parse_units(library)
 
-        # Parse sites
-        library.sites = self._parse_sites(content)
+            elif token_upper == "MANUFACTURINGGRID":
+                self._consume()
+                library.manufacturing_grid = float(self._consume())
+                self._skip_semicolon()
 
-        # Parse macros
-        library.macros = self._parse_macros(content)
+            elif token_upper == "LAYER":
+                layer = self._parse_layer()
+                library.layers[layer.name] = layer
+
+            elif token_upper == "VIA":
+                via = self._parse_via()
+                library.vias[via.name] = via
+
+            elif token_upper == "SITE":
+                site = self._parse_site()
+                library.sites[site.name] = site
+
+            elif token_upper == "MACRO":
+                macro = self._parse_macro()
+                library.macros[macro.name] = macro
+
+            elif token_upper == "END":
+                # End of a top-level block (e.g., END LIBRARY)
+                self._consume()
+                if self._peek():
+                    self._consume()  # Consume the name after END
+                break
+
+            else:
+                # Skip unknown tokens (e.g., BUSBITCHARS, DIVIDERCHAR)
+                self._consume()
+                # If followed by quoted string or value, consume until semicolon
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
 
         return library
 
     def _remove_comments(self, content: str) -> str:
-        """Removes '#' comments from the content."""
-        return re.sub(r"#.*$", "", content, flags=re.MULTILINE)
+        """Removes both # line comments and /* */ block comments."""
+        # Remove /* ... */ comments
+        content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+        # Remove # ... comments
+        content = re.sub(r"#.*$", "", content, flags=re.MULTILINE)
+        return content
 
-    def _parse_layers(self, content: str) -> dict[str, MetalLayer]:
-        """Parses LAYER sections from the content."""
-        layers = {}
+    def _tokenize(self, content: str) -> list[str]:
+        """Converts the content string into a stream of tokens."""
+        return self._TOKEN_PATTERN.findall(content)
 
-        # Pattern for LAYER ... END layername
-        pattern = r"LAYER\s+(\S+)\s*\n(.*?)END\s+\1"
+    def _expect(self, expected: str, case_sensitive: bool = False) -> str:
+        """LEF uses case-insensitive keywords by default."""
+        return super()._expect(expected, case_sensitive=case_sensitive)
 
-        for match in re.finditer(pattern, content, re.DOTALL | re.IGNORECASE):
-            name = match.group(1)
-            body = match.group(2)
+    def _skip_to_end(self, end_name: str) -> None:
+        """Skips tokens until END <end_name> is found."""
+        while self._pos < self._length:
+            if self._peek() and self._peek().upper() == "END":
+                self._consume()
+                if self._peek() and self._peek().upper() == end_name.upper():
+                    self._consume()
+                    return
+            else:
+                self._consume()
 
-            layer = MetalLayer(name=name)
+    def _parse_units(self, library: LEFLibrary) -> None:
+        """Parses UNITS ... END UNITS block."""
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
 
-            # Parse TYPE
-            type_match = re.search(r"TYPE\s+(\w+)\s*;", body, re.IGNORECASE)
-            if type_match:
-                layer_type = type_match.group(1).lower()
+            token_upper = token.upper()
+
+            if token_upper == "END":
+                self._consume()
+                if self._peek() and self._peek().upper() == "UNITS":
+                    self._consume()
+                break
+
+            elif token_upper == "DATABASE":
+                self._consume()
+                if self._peek() and self._peek().upper() == "MICRONS":
+                    self._consume()
+                    library.units_database = int(self._consume())
+                self._skip_semicolon()
+
+            else:
+                # Skip unknown unit types
+                self._consume()
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
+
+    def _parse_layer(self) -> MetalLayer:
+        """Parses LAYER ... END <name> block."""
+        self._expect("LAYER")
+        name = self._consume()
+        layer = MetalLayer(name=name)
+
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
+
+            token_upper = token.upper()
+
+            if token_upper == "END":
+                self._consume()
+                self._consume()  # layer name
+                break
+
+            elif token_upper == "TYPE":
+                self._consume()
+                layer_type = self._consume().lower()
                 if layer_type == "routing":
                     layer.layer_type = LayerType.ROUTING
                 elif layer_type == "cut":
@@ -111,246 +207,440 @@ class LEFParser(BaseParser[LEFLibrary]):
                     layer.layer_type = LayerType.OVERLAP
                 elif layer_type == "implant":
                     layer.layer_type = LayerType.IMPLANT
+                self._skip_semicolon()
 
-            # Parse DIRECTION
-            dir_match = re.search(r"DIRECTION\s+(\w+)\s*;", body, re.IGNORECASE)
-            if dir_match:
-                direction = dir_match.group(1).lower()
+            elif token_upper == "DIRECTION":
+                self._consume()
+                direction = self._consume().lower()
                 if direction == "horizontal":
                     layer.direction = LayerDirection.HORIZONTAL
                 elif direction == "vertical":
                     layer.direction = LayerDirection.VERTICAL
+                self._skip_semicolon()
 
-            # Parse PITCH
-            pitch_match = re.search(r"PITCH\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if pitch_match:
-                layer.pitch = float(pitch_match.group(1))
+            elif token_upper == "PITCH":
+                self._consume()
+                layer.pitch = float(self._consume())
+                # Handle PITCH x y format
+                if self._peek() and self._peek() != ";":
+                    self._consume()  # Skip second value
+                self._skip_semicolon()
 
-            # Parse WIDTH
-            width_match = re.search(r"WIDTH\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if width_match:
-                layer.width = float(width_match.group(1))
+            elif token_upper == "WIDTH":
+                self._consume()
+                layer.width = float(self._consume())
+                self._skip_semicolon()
 
-            # Parse MINWIDTH
-            minwidth_match = re.search(r"MINWIDTH\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if minwidth_match:
-                layer.min_width = float(minwidth_match.group(1))
+            elif token_upper == "MINWIDTH":
+                self._consume()
+                layer.min_width = float(self._consume())
+                self._skip_semicolon()
 
-            # Parse SPACING
-            spacing_match = re.search(r"SPACING\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if spacing_match:
-                layer.spacing = float(spacing_match.group(1))
+            elif token_upper == "SPACING":
+                self._consume()
+                layer.spacing = float(self._consume())
+                # Skip any additional spacing constraints
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
 
-            # Parse RESISTANCE (RPERSQ)
-            res_match = re.search(r"RESISTANCE\s+RPERSQ\s+([\d.eE+-]+)\s*;", body, re.IGNORECASE)
-            if res_match:
-                layer.resistance = float(res_match.group(1))
+            elif token_upper == "RESISTANCE":
+                self._consume()
+                if self._peek() and self._peek().upper() == "RPERSQ":
+                    self._consume()
+                    layer.resistance = float(self._consume())
+                else:
+                    self._consume()  # Skip value
+                self._skip_semicolon()
 
-            # Parse CAPACITANCE (CPERSQDIST)
-            cap_match = re.search(
-                r"CAPACITANCE\s+CPERSQDIST\s+([\d.eE+-]+)\s*;", body, re.IGNORECASE
-            )
-            if cap_match:
-                layer.capacitance = float(cap_match.group(1))
+            elif token_upper == "CAPACITANCE":
+                self._consume()
+                if self._peek() and self._peek().upper() == "CPERSQDIST":
+                    self._consume()
+                    layer.capacitance = float(self._consume())
+                else:
+                    self._consume()  # Skip value
+                self._skip_semicolon()
 
-            # Parse EDGECAPACITANCE
-            edge_cap_match = re.search(r"EDGECAPACITANCE\s+([\d.eE+-]+)\s*;", body, re.IGNORECASE)
-            if edge_cap_match:
-                layer.edge_capacitance = float(edge_cap_match.group(1))
+            elif token_upper == "EDGECAPACITANCE":
+                self._consume()
+                layer.edge_capacitance = float(self._consume())
+                self._skip_semicolon()
 
-            # Parse THICKNESS
-            thick_match = re.search(r"THICKNESS\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if thick_match:
-                layer.thickness = float(thick_match.group(1))
+            elif token_upper == "THICKNESS":
+                self._consume()
+                layer.thickness = float(self._consume())
+                self._skip_semicolon()
 
-            # Parse HEIGHT
-            height_match = re.search(r"HEIGHT\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if height_match:
-                layer.height = float(height_match.group(1))
+            elif token_upper == "HEIGHT":
+                self._consume()
+                layer.height = float(self._consume())
+                self._skip_semicolon()
 
-            layers[name] = layer
-
-        return layers
-
-    def _parse_vias(self, content: str) -> dict[str, Via]:
-        """Parses VIA sections from the content."""
-        vias = {}
-
-        # Pattern for VIA ... END vianame
-        pattern = r"VIA\s+(\S+)\s*(DEFAULT)?\s*\n(.*?)END\s+\1"
-
-        for match in re.finditer(pattern, content, re.DOTALL | re.IGNORECASE):
-            name = match.group(1)
-            body = match.group(3)
-
-            via = Via(name=name)
-
-            # Extract layer references from RECT statements
-            layer_pattern = r"LAYER\s+(\S+)\s*;"
-            via.layers = re.findall(layer_pattern, body, re.IGNORECASE)
-
-            # Parse RESISTANCE
-            res_match = re.search(r"RESISTANCE\s+([\d.eE+-]+)\s*;", body, re.IGNORECASE)
-            if res_match:
-                via.resistance = float(res_match.group(1))
-
-            vias[name] = via
-
-        return vias
-
-    def _parse_sites(self, content: str) -> dict[str, Site]:
-        """Parses SITE sections from the content."""
-        sites = {}
-
-        # Pattern for SITE ... END sitename
-        pattern = r"SITE\s+(\S+)\s*\n(.*?)END\s+\1"
-
-        for match in re.finditer(pattern, content, re.DOTALL | re.IGNORECASE):
-            name = match.group(1)
-            body = match.group(2)
-
-            # Parse CLASS
-            class_match = re.search(r"CLASS\s+(\w+)\s*;", body, re.IGNORECASE)
-            class_type = class_match.group(1).lower() if class_match else "core"
-
-            # Parse SIZE
-            size_match = re.search(r"SIZE\s+([\d.]+)\s+BY\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if size_match:
-                width = float(size_match.group(1))
-                height = float(size_match.group(2))
             else:
-                width, height = 0.0, 0.0
+                # Skip unknown layer properties
+                self._consume()
+                while self._peek() and self._peek() != ";" and self._peek().upper() != "END":
+                    self._consume()
+                self._skip_semicolon()
 
-            # Parse SYMMETRY
-            sym_match = re.search(r"SYMMETRY\s+([^;]+);", body, re.IGNORECASE)
-            symmetry = sym_match.group(1).split() if sym_match else []
+        return layer
 
-            sites[name] = Site(
-                name=name, class_type=class_type, width=width, height=height, symmetry=symmetry
-            )
+    def _parse_via(self) -> Via:
+        """Parses VIA ... END <name> block."""
+        self._expect("VIA")
+        name = self._consume()
 
-        return sites
+        # Handle optional DEFAULT keyword
+        if self._peek() and self._peek().upper() == "DEFAULT":
+            self._consume()
 
-    def _parse_macros(self, content: str) -> dict[str, Macro]:
-        """Parses MACRO sections from the content."""
-        macros = {}
+        via = Via(name=name)
+        via.layers = []
 
-        # Pattern for MACRO ... END macroname
-        pattern = r"MACRO\s+(\S+)\s*\n(.*?)END\s+\1"
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
 
-        for match in re.finditer(pattern, content, re.DOTALL | re.IGNORECASE):
-            name = match.group(1)
-            body = match.group(2)
+            token_upper = token.upper()
 
-            # Parse CLASS
-            class_match = re.search(r"CLASS\s+(\w+)\s*;", body, re.IGNORECASE)
-            class_type = class_match.group(1).lower() if class_match else "core"
+            if token_upper == "END":
+                self._consume()
+                self._consume()  # via name
+                break
 
-            # Parse ORIGIN
-            origin_match = re.search(r"ORIGIN\s+([\d.+-]+)\s+([\d.+-]+)\s*;", body, re.IGNORECASE)
-            origin = (
-                (float(origin_match.group(1)), float(origin_match.group(2)))
-                if origin_match
-                else (0.0, 0.0)
-            )
+            elif token_upper == "LAYER":
+                self._consume()
+                layer_name = self._consume()
+                via.layers.append(layer_name)
+                self._skip_semicolon()
 
-            # Parse SIZE
-            size_match = re.search(r"SIZE\s+([\d.]+)\s+BY\s+([\d.]+)\s*;", body, re.IGNORECASE)
-            if size_match:
-                size = (float(size_match.group(1)), float(size_match.group(2)))
+            elif token_upper == "RECT":
+                self._consume()
+                # Consume 4 coordinates
+                for _ in range(4):
+                    if self._peek() and self._peek() != ";":
+                        self._consume()
+                self._skip_semicolon()
+
+            elif token_upper == "RESISTANCE":
+                self._consume()
+                via.resistance = float(self._consume())
+                self._skip_semicolon()
+
             else:
-                size = (0.0, 0.0)
+                # Skip unknown via properties
+                self._consume()
+                while self._peek() and self._peek() != ";" and self._peek().upper() != "END":
+                    self._consume()
+                self._skip_semicolon()
 
-            # Parse SYMMETRY
-            sym_match = re.search(r"SYMMETRY\s+([^;]+);", body, re.IGNORECASE)
-            symmetry = sym_match.group(1).split() if sym_match else []
+        return via
 
-            # Parse SITE
-            site_match = re.search(r"SITE\s+(\S+)\s*;", body, re.IGNORECASE)
-            site = site_match.group(1) if site_match else None
+    def _parse_site(self) -> Site:
+        """Parses SITE ... END <name> block."""
+        self._expect("SITE")
+        name = self._consume()
 
-            # Parse FOREIGN
-            foreign_match = re.search(r"FOREIGN\s+(\S+)", body, re.IGNORECASE)
-            foreign = foreign_match.group(1) if foreign_match else None
+        class_type = "core"
+        width, height = 0.0, 0.0
+        symmetry = []
 
-            # Parse PINs
-            pins = self._parse_macro_pins(body)
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
 
-            # Parse OBSTRUCTIONs
-            obstructions = self._parse_obstructions(body)
+            token_upper = token.upper()
 
-            macros[name] = Macro(
-                name=name,
-                class_type=class_type,
-                origin=origin,
-                size=size,
-                symmetry=symmetry,
-                site=site,
-                foreign=foreign,
-                pins=pins,
-                obstructions=obstructions,
-            )
+            if token_upper == "END":
+                self._consume()
+                self._consume()  # site name
+                break
 
-        return macros
+            elif token_upper == "CLASS":
+                self._consume()
+                class_type = self._consume().lower()
+                self._skip_semicolon()
 
-    def _parse_macro_pins(self, macro_body: str) -> dict[str, MacroPin]:
-        """Parses PIN sections within a macro body."""
+            elif token_upper == "SIZE":
+                self._consume()
+                width = float(self._consume())
+                self._expect("BY")
+                height = float(self._consume())
+                self._skip_semicolon()
+
+            elif token_upper == "SYMMETRY":
+                self._consume()
+                while self._peek() and self._peek() != ";":
+                    symmetry.append(self._consume())
+                self._skip_semicolon()
+
+            else:
+                # Skip unknown site properties
+                self._consume()
+                while self._peek() and self._peek() != ";" and self._peek().upper() != "END":
+                    self._consume()
+                self._skip_semicolon()
+
+        return Site(
+            name=name,
+            class_type=class_type,
+            width=width,
+            height=height,
+            symmetry=symmetry
+        )
+
+    def _parse_macro(self) -> Macro:
+        """Parses MACRO ... END <name> block."""
+        self._expect("MACRO")
+        name = self._consume()
+
+        class_type = "core"
+        origin = (0.0, 0.0)
+        size = (0.0, 0.0)
+        symmetry = []
+        site = None
+        foreign = None
         pins = {}
-
-        # Pattern for PIN ... END pinname
-        pattern = r"PIN\s+(\S+)\s*\n(.*?)END\s+\1"
-
-        for match in re.finditer(pattern, macro_body, re.DOTALL | re.IGNORECASE):
-            name = match.group(1)
-            body = match.group(2)
-
-            # Parse DIRECTION
-            dir_match = re.search(r"DIRECTION\s+(\w+)\s*;", body, re.IGNORECASE)
-            direction = dir_match.group(1).lower() if dir_match else "input"
-
-            # Parse USE
-            use_match = re.search(r"USE\s+(\w+)\s*;", body, re.IGNORECASE)
-            use = use_match.group(1).lower() if use_match else None
-
-            # Parse SHAPE
-            shape_match = re.search(r"SHAPE\s+(\w+)\s*;", body, re.IGNORECASE)
-            shape = shape_match.group(1).lower() if shape_match else None
-
-            # Parse PORT rectangles
-            ports = []
-            port_pattern = r"PORT\s*(.*?)END"
-            for port_match in re.finditer(port_pattern, body, re.DOTALL | re.IGNORECASE):
-                port_body = port_match.group(1)
-
-                # Find all RECT statements
-                rect_pattern = r"LAYER\s+(\S+)\s*;\s*RECT\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s*;"
-                for rect_match in re.finditer(rect_pattern, port_body, re.IGNORECASE):
-                    layer = rect_match.group(1)
-                    x1, y1, x2, y2 = (float(rect_match.group(i)) for i in range(2, 6))
-                    ports.append(Rect(layer=layer, x1=x1, y1=y1, x2=x2, y2=y2))
-
-            pins[name] = MacroPin(name=name, direction=direction, use=use, shape=shape, ports=ports)
-
-        return pins
-
-    def _parse_obstructions(self, macro_body: str) -> list[Rect]:
-        """Parses OBS (obstruction) sections within a macro body."""
         obstructions = []
 
-        obs_pattern = r"OBS\s*(.*?)END"
-        for obs_match in re.finditer(obs_pattern, macro_body, re.DOTALL | re.IGNORECASE):
-            obs_body = obs_match.group(1)
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
 
-            # Find all RECT statements
-            rect_pattern = (
-                r"LAYER\s+(\S+)\s*;\s*RECT\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s*;"
-            )
-            for rect_match in re.finditer(rect_pattern, obs_body, re.IGNORECASE):
-                layer = rect_match.group(1)
-                x1, y1, x2, y2 = (float(rect_match.group(i)) for i in range(2, 6))
-                obstructions.append(Rect(layer=layer, x1=x1, y1=y1, x2=x2, y2=y2))
+            token_upper = token.upper()
 
-        return obstructions
+            if token_upper == "END":
+                self._consume()
+                end_name = self._consume()  # macro name
+                if end_name and end_name.upper() == name.upper():
+                    break
+                # If END doesn't match macro name, it's nested END, continue
+
+            elif token_upper == "CLASS":
+                self._consume()
+                class_type = self._consume().lower()
+                self._skip_semicolon()
+
+            elif token_upper == "ORIGIN":
+                self._consume()
+                x = float(self._consume())
+                y = float(self._consume())
+                origin = (x, y)
+                self._skip_semicolon()
+
+            elif token_upper == "SIZE":
+                self._consume()
+                w = float(self._consume())
+                self._expect("BY")
+                h = float(self._consume())
+                size = (w, h)
+                self._skip_semicolon()
+
+            elif token_upper == "SYMMETRY":
+                self._consume()
+                while self._peek() and self._peek() != ";":
+                    symmetry.append(self._consume())
+                self._skip_semicolon()
+
+            elif token_upper == "SITE":
+                self._consume()
+                site = self._consume()
+                self._skip_semicolon()
+
+            elif token_upper == "FOREIGN":
+                self._consume()
+                foreign = self._consume()
+                # Skip optional coordinates
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
+
+            elif token_upper == "PIN":
+                pin = self._parse_macro_pin()
+                pins[pin.name] = pin
+
+            elif token_upper == "OBS":
+                obs_rects = self._parse_obstruction()
+                obstructions.extend(obs_rects)
+
+            else:
+                # Skip unknown macro properties
+                self._consume()
+                while self._peek() and self._peek() != ";" and self._peek().upper() != "END" and self._peek().upper() != "PIN" and self._peek().upper() != "OBS":
+                    self._consume()
+                self._skip_semicolon()
+
+        return Macro(
+            name=name,
+            class_type=class_type,
+            origin=origin,
+            size=size,
+            symmetry=symmetry,
+            site=site,
+            foreign=foreign,
+            pins=pins,
+            obstructions=obstructions
+        )
+
+    def _parse_macro_pin(self) -> MacroPin:
+        """Parses PIN ... END <name> block within a macro."""
+        self._expect("PIN")
+        name = self._consume()
+
+        direction = "input"
+        use = None
+        shape = None
+        ports = []
+
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
+
+            token_upper = token.upper()
+
+            if token_upper == "END":
+                self._consume()
+                end_name = self._consume()  # pin name
+                if end_name and end_name.upper() == name.upper():
+                    break
+
+            elif token_upper == "DIRECTION":
+                self._consume()
+                direction = self._consume().lower()
+                self._skip_semicolon()
+
+            elif token_upper == "USE":
+                self._consume()
+                use = self._consume().lower()
+                self._skip_semicolon()
+
+            elif token_upper == "SHAPE":
+                self._consume()
+                shape = self._consume().lower()
+                self._skip_semicolon()
+
+            elif token_upper == "PORT":
+                self._consume()
+                port_rects = self._parse_port()
+                ports.extend(port_rects)
+
+            else:
+                # Skip unknown pin properties
+                self._consume()
+                while self._peek() and self._peek() != ";" and self._peek().upper() != "END" and self._peek().upper() != "PORT":
+                    self._consume()
+                self._skip_semicolon()
+
+        return MacroPin(
+            name=name,
+            direction=direction,
+            use=use,
+            shape=shape,
+            ports=ports
+        )
+
+    def _parse_port(self) -> list[Rect]:
+        """Parses PORT ... END block within a pin."""
+        rects = []
+        current_layer = None
+
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
+
+            token_upper = token.upper()
+
+            if token_upper == "END":
+                self._consume()
+                # PORT blocks just have "END" without name
+                break
+
+            elif token_upper == "LAYER":
+                self._consume()
+                current_layer = self._consume()
+                self._skip_semicolon()
+
+            elif token_upper == "RECT":
+                self._consume()
+                x1 = float(self._consume())
+                y1 = float(self._consume())
+                x2 = float(self._consume())
+                y2 = float(self._consume())
+                if current_layer:
+                    rects.append(Rect(layer=current_layer, x1=x1, y1=y1, x2=x2, y2=y2))
+                self._skip_semicolon()
+
+            elif token_upper == "POLYGON":
+                self._consume()
+                # Skip polygon coordinates until semicolon
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
+
+            elif token_upper == "VIA":
+                self._consume()
+                # Skip via reference until semicolon
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
+
+            else:
+                # Skip unknown port elements
+                self._consume()
+
+        return rects
+
+    def _parse_obstruction(self) -> list[Rect]:
+        """Parses OBS ... END block within a macro."""
+        self._expect("OBS")
+        rects = []
+        current_layer = None
+
+        while self._pos < self._length:
+            token = self._peek()
+            if token is None:
+                break
+
+            token_upper = token.upper()
+
+            if token_upper == "END":
+                self._consume()
+                # OBS blocks just have "END" without name
+                break
+
+            elif token_upper == "LAYER":
+                self._consume()
+                current_layer = self._consume()
+                self._skip_semicolon()
+
+            elif token_upper == "RECT":
+                self._consume()
+                x1 = float(self._consume())
+                y1 = float(self._consume())
+                x2 = float(self._consume())
+                y2 = float(self._consume())
+                if current_layer:
+                    rects.append(Rect(layer=current_layer, x1=x1, y1=y1, x2=x2, y2=y2))
+                self._skip_semicolon()
+
+            elif token_upper == "POLYGON":
+                self._consume()
+                # Skip polygon coordinates until semicolon
+                while self._peek() and self._peek() != ";":
+                    self._consume()
+                self._skip_semicolon()
+
+            else:
+                # Skip unknown obstruction elements
+                self._consume()
+
+        return rects
 
     def validate(self, data: LEFLibrary) -> list[str]:
         """Validates the parsed LEF library.

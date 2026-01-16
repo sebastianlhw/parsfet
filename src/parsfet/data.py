@@ -30,6 +30,7 @@ from .parsers.liberty import LibertyParser
 from .parsers.lef import LEFParser, TechLEFParser
 from .normalizers.invd1 import INVD1Normalizer, NormalizedMetrics
 from .models.physical import CellPhysical, TechInfo
+from .exceptions import DuplicateCellError
 
 if TYPE_CHECKING:
     from .models.liberty import LibertyLibrary
@@ -59,6 +60,7 @@ class LibraryEntry:
         metrics: Dictionary of cell name to NormalizedMetrics.
         lef_cells: Dictionary of cell name to CellPhysical (from LEF).
         tech_info: TechInfo from TechLEF (if loaded).
+        source_file: Path to the source Liberty file.
     """
 
     library: LibertyLibrary
@@ -66,6 +68,7 @@ class LibraryEntry:
     metrics: dict[str, NormalizedMetrics] = field(default_factory=dict)
     lef_cells: dict[str, CellPhysical] = field(default_factory=dict)
     tech_info: Optional[TechInfo] = None
+    source_file: Optional[Path] = None
 
 
 class Dataset:
@@ -90,18 +93,20 @@ class Dataset:
         self._lef_parser = LEFParser()
         self._tech_lef_parser = TechLEFParser()
 
-    def load_files(self, paths: list[Path | str]) -> "Dataset":
-        """Load and normalize a list of Liberty files.
+    def load_files(self, paths: list[Path | str], normalize: bool = True) -> "Dataset":
+        """Load a list of Liberty files.
 
         Args:
             paths: List of file paths (Path or str) to Liberty (.lib) files.
+            normalize: If True, normalize cells immediately (original behavior).
+                If False, defer normalization for later combine() call.
 
         Returns:
             self, for method chaining.
 
         Raises:
             FileNotFoundError: If a file does not exist.
-            ValueError: If no baseline cell is found in a library.
+            ValueError: If no baseline cell is found and normalize=True.
         """
         for p in paths:
             path = Path(p)
@@ -110,16 +115,25 @@ class Dataset:
 
             lib = self._parser.parse(path)
 
-            try:
-                normalizer = INVD1Normalizer(lib)
-                metrics = normalizer.normalize_all()
-            except ValueError:
-                # No baseline cell - skip normalization
+            if normalize:
+                try:
+                    normalizer = INVD1Normalizer(lib)
+                    metrics = normalizer.normalize_all()
+                except ValueError:
+                    # No baseline cell - skip normalization
+                    normalizer = None
+                    metrics = {}
+            else:
                 normalizer = None
                 metrics = {}
 
             self.entries.append(
-                LibraryEntry(library=lib, normalizer=normalizer, metrics=metrics)
+                LibraryEntry(
+                    library=lib,
+                    normalizer=normalizer,
+                    metrics=metrics,
+                    source_file=path,
+                )
             )
 
         return self
@@ -182,6 +196,147 @@ class Dataset:
 
         return self
 
+    def find_duplicates(self) -> dict[str, list[tuple[int, Path]]]:
+        """Detect cells that appear in multiple loaded entries.
+
+        Returns:
+            A dictionary mapping cell name to list of (entry_index, source_file).
+            Empty dict means no duplicates found.
+
+        Example:
+            >>> ds = Dataset()
+            >>> ds.load_files(["lib1.lib", "lib2.lib"], normalize=False)
+            >>> dups = ds.find_duplicates()
+            >>> if dups:
+            ...     print(f"Found {len(dups)} duplicate cells")
+        """
+        cell_sources: dict[str, list[tuple[int, Path]]] = {}
+
+        for idx, entry in enumerate(self.entries):
+            source = entry.source_file or Path(f"<entry_{idx}>")
+            for cell_name in entry.library.cells.keys():
+                if cell_name not in cell_sources:
+                    cell_sources[cell_name] = []
+                cell_sources[cell_name].append((idx, source))
+
+        # Filter to only cells appearing in multiple entries
+        return {
+            name: sources
+            for name, sources in cell_sources.items()
+            if len(sources) > 1
+        }
+
+    def combine(self, allow_duplicates: bool = False) -> "Dataset":
+        """Combine all entries into ONE grand dataset with unified normalization.
+
+        This method merges all cells from all loaded libraries into a single
+        unified dataset. A baseline inverter is found from the combined cell
+        pool, and ALL cells are re-normalized against this single baseline.
+
+        Args:
+            allow_duplicates: If False (default), raise DuplicateCellError when
+                cells with the same name appear in multiple files. If True,
+                first occurrence wins and later occurrences are ignored.
+
+        Returns:
+            A new Dataset with one unified LibraryEntry containing all cells.
+
+        Raises:
+            DuplicateCellError: If duplicates found and allow_duplicates=False.
+            ValueError: If no entries loaded or no baseline cell found.
+
+        Example:
+            >>> ds = Dataset()
+            >>> ds.load_files(["lib1.lib", "lib2.lib"], normalize=False)
+            >>> combined = ds.combine()
+            >>> df = combined.to_dataframe()  # Unified normalization
+        """
+        if not self.entries:
+            raise ValueError("No entries loaded. Call load_files() first.")
+
+        # Check for duplicates
+        duplicates = self.find_duplicates()
+        if duplicates and not allow_duplicates:
+            raise DuplicateCellError(duplicates)
+
+        # Merge all cells into a combined library
+        # Use first entry as base and merge cells from others
+        from .models.liberty import LibertyLibrary, Cell
+
+        base_entry = self.entries[0]
+        combined_cells: dict[str, Cell] = {}
+        cell_sources: dict[str, Path] = {}  # Track origin for each cell
+
+        for entry in self.entries:
+            source = entry.source_file or Path("<unknown>")
+            for cell_name, cell in entry.library.cells.items():
+                if cell_name not in combined_cells:
+                    combined_cells[cell_name] = cell
+                    cell_sources[cell_name] = source
+                # else: duplicate, skip (first wins)
+
+        # Create a combined library using the first library's metadata
+        combined_lib = LibertyLibrary(
+            name=f"combined_{len(self.entries)}_libs",
+            technology=base_entry.library.technology,
+            delay_model=base_entry.library.delay_model,
+            time_unit=base_entry.library.time_unit,
+            capacitive_load_unit=base_entry.library.capacitive_load_unit,
+            voltage_unit=base_entry.library.voltage_unit,
+            current_unit=base_entry.library.current_unit,
+            leakage_power_unit=base_entry.library.leakage_power_unit,
+            pulling_resistance_unit=base_entry.library.pulling_resistance_unit,
+            nom_voltage=base_entry.library.nom_voltage,
+            nom_temperature=base_entry.library.nom_temperature,
+            nom_process=base_entry.library.nom_process,
+            operating_conditions=base_entry.library.operating_conditions,
+            vt_flavor=base_entry.library.vt_flavor,
+            process_node=base_entry.library.process_node,
+            foundry=base_entry.library.foundry,
+            lu_table_templates=base_entry.library.lu_table_templates,
+            cells=combined_cells,
+            attributes=base_entry.library.attributes,
+        )
+
+        # Create normalizer from combined library (finds baseline from all cells)
+        try:
+            normalizer = INVD1Normalizer(combined_lib)
+            metrics = normalizer.normalize_all()
+        except ValueError as e:
+            raise ValueError(f"No baseline cell found in combined dataset: {e}") from e
+
+        # Merge LEF data
+        combined_lef: dict[str, CellPhysical] = {}
+        for entry in self.entries:
+            combined_lef.update(entry.lef_cells)
+
+        # Use first available tech_info
+        tech_info = None
+        for entry in self.entries:
+            if entry.tech_info:
+                tech_info = entry.tech_info
+                break
+
+        # Create combined entry
+        combined_entry = LibraryEntry(
+            library=combined_lib,
+            normalizer=normalizer,
+            metrics=metrics,
+            lef_cells=combined_lef,
+            tech_info=tech_info,
+            source_file=None,  # Combined from multiple files
+        )
+
+        # Store cell sources for provenance tracking
+        combined_entry._cell_sources = cell_sources  # type: ignore
+
+        # Create new dataset with combined entry
+        result = Dataset()
+        result.entries = [combined_entry]
+        result._cell_sources = cell_sources  # Store at dataset level too
+
+        return result
+
     def to_dataframe(self) -> pd.DataFrame:
         """Convert all loaded data to a flat Pandas DataFrame.
 
@@ -194,6 +349,7 @@ class Dataset:
         - Context: voltage, temperature, process_node
         - LEF columns (if loaded): lef_width, lef_height, lef_area, pin_layers_json
         - TechLEF columns (if loaded): metal_stack_height
+        - source_file: Path to the source .lib file (for provenance tracking)
 
         Returns:
             A DataFrame with one row per cell across all libraries.
@@ -269,6 +425,15 @@ class Dataset:
                     row["metal_stack_height"] = entry.tech_info.metal_stack_height
                 else:
                     row["metal_stack_height"] = None
+
+                # Add source file provenance
+                # For combined datasets, check _cell_sources; otherwise use entry.source_file
+                if hasattr(self, "_cell_sources") and cell_name in self._cell_sources:
+                    row["source_file"] = str(self._cell_sources[cell_name])
+                elif entry.source_file:
+                    row["source_file"] = str(entry.source_file)
+                else:
+                    row["source_file"] = None
 
                 rows.append(row)
 
