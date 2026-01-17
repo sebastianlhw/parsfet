@@ -9,7 +9,6 @@ A Python-based framework for parsing semiconductor technology files (`.lib`, `.l
 
 - **Logic Function Classification**: Automatically identifies NAND, NOR, XOR, etc., from boolean formulas.
 - **Linear Delay Modeling (D₀ + k)**: Separates intrinsic delay from drive capability for architecture-agnostic comparison.
-- **Fit Quality Metrics**: Validates linear delay assumptions with R² and residual analysis.
 - **Technology Fingerprinting**: Creates vector representations of libraries for ML applications.
 - **Combined LEF/TechLEF Export**: Merges Liberty timing data with physical layout info (cell dimensions, pin layers, technology rules) into unified JSON.
 
@@ -67,7 +66,6 @@ print(df[["cell", "area_ratio", "lef_width", "lef_height"]].head())
 - **Liberty (.lib)**: Timing, power, and capacitance data
 - **LEF (.lef)**: Physical cell definitions (dimensions, pins, layers)
 - **TechLEF (.techlef)**: Metal layer and via definitions
-- **ICT (.ict)**: Interconnect technology parameters
 
 ## JSON Output Structure
 
@@ -112,11 +110,11 @@ This project is licensed under the MIT License. You are free to use, modify, and
 
 ## Third-Party Data
 
-This repository contains partial files from the following open-source projects for testing purposes:
+This project uses partial files from the following open-source projects for testing purposes:
 
 - **SkyWater 130nm PDK**: Licensed under [Apache License 2.0](testdata/skywater/skywater-pdk/LICENSE).
   - Source: [google/skywater-pdk](https://github.com/google/skywater-pdk)
 - **ASAP7 PDK**: Licensed under [BSD 3-Clause License](testdata/asap7/LICENSE).
   - Source: [The-OpenROAD-Project/asap7](https://github.com/The-OpenROAD-Project/asap7)
 
-See the respective `LICENSE` files in `testdata/` for full terms.
+See corresponding `LICENSE` files for full terms.

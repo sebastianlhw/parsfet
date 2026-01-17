@@ -1,197 +1,395 @@
 """Cell Type Classifier.
 
 This module categorizes standard cells based on their logical function.
-It analyzes pin directions and boolean function strings to determine if a cell
-is a basic gate (INV, NAND, NOR, etc.), a sequential element (DFF, Latch),
-or a complex logic cell.
+It parses boolean function strings into an AST, evaluates truth tables,
+and classifies cells by comparing signatures to known gate patterns.
 
-This classification is crucial for:
-- Finding equivalent cells across libraries.
-- Generating technology fingerprints.
-- Normalizing metrics by cell type.
+This semantic approach correctly handles:
+- De Morgan equivalents: !(A|B) == !A & !B → 'nor'
+- Multiple syntax variants: A', ~A, !A → all recognized as NOT
+- Arbitrary input counts up to MAX_INPUTS
 """
 
+from __future__ import annotations
+
 import re
+from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..models.liberty import Cell
 
 
-# Pattern matchers for logic functions
-# Handle multiple syntax variants: Synopsys, Cadence, Verilog
+# --- Configuration ---
 
-def _normalize_function(func: str) -> str:
-    """Normalizes boolean function strings for consistent pattern matching.
+MAX_INPUTS = 6  # Beyond this, fall back to 'unknown' (2^6 = 64 evaluations)
 
-    Removes whitespace, standardizes negation symbols (e.g., A', ~A -> !A),
-    and strips redundant outer parentheses.
+
+# --- AST Node Classes ---
+
+
+class ASTNode(ABC):
+    """Abstract base class for boolean expression AST nodes."""
+
+    @abstractmethod
+    def evaluate(self, env: dict[str, int]) -> int:
+        """Evaluate node given variable assignments (0 or 1)."""
+
+    @abstractmethod
+    def get_variables(self) -> set[str]:
+        """Return set of all variable names in this subtree."""
+
+
+class VarNode(ASTNode):
+    """Variable reference node."""
+
+    def __init__(self, name: str):
+        self.name = name.upper()  # Normalize to uppercase
+
+    def evaluate(self, env: dict[str, int]) -> int:
+        return env.get(self.name, 0)
+
+    def get_variables(self) -> set[str]:
+        return {self.name}
+
+
+class NotNode(ASTNode):
+    """Logical NOT node."""
+
+    def __init__(self, child: ASTNode):
+        self.child = child
+
+    def evaluate(self, env: dict[str, int]) -> int:
+        return 1 - self.child.evaluate(env)
+
+    def get_variables(self) -> set[str]:
+        return self.child.get_variables()
+
+
+class BinaryOpNode(ASTNode):
+    """Base class for binary operations."""
+
+    def __init__(self, left: ASTNode, right: ASTNode):
+        self.left = left
+        self.right = right
+
+    def get_variables(self) -> set[str]:
+        return self.left.get_variables() | self.right.get_variables()
+
+
+class AndNode(BinaryOpNode):
+    """Logical AND node."""
+
+    def evaluate(self, env: dict[str, int]) -> int:
+        return self.left.evaluate(env) & self.right.evaluate(env)
+
+
+class OrNode(BinaryOpNode):
+    """Logical OR node."""
+
+    def evaluate(self, env: dict[str, int]) -> int:
+        return self.left.evaluate(env) | self.right.evaluate(env)
+
+
+class XorNode(BinaryOpNode):
+    """Logical XOR node."""
+
+    def evaluate(self, env: dict[str, int]) -> int:
+        return self.left.evaluate(env) ^ self.right.evaluate(env)
+
+
+# --- Tokenizer ---
+
+
+def _tokenize(func: str) -> list[str]:
+    """Convert a function string to a list of tokens.
+
+    Handles operators: ! ~ (NOT), & * (AND), | + (OR), ^ (XOR), ( )
+    Also handles postfix negation: A' → becomes ['A', "!'"]
     """
-    # Remove whitespace
+    # Normalize whitespace
     func = func.replace(" ", "")
-    # Normalize negation syntax: A' → !A, ~A → !A
-    func = re.sub(r"(\w)'", r"!\1", func)
+
+    # Replace ~ with ! for consistency
     func = func.replace("~", "!")
-    # Strip outer parentheses: (expr) → expr
-    while func.startswith("(") and func.endswith(")"):
-        # Check if the parens are balanced (not like "(A)|(B)")
-        depth = 0
-        balanced = True
-        for i, c in enumerate(func[1:-1]):
-            if c == "(":
-                depth += 1
-            elif c == ")":
-                depth -= 1
-                if depth < 0:
-                    balanced = False
-                    break
-        if balanced and depth == 0:
-            func = func[1:-1]
+
+    tokens: list[str] = []
+    i = 0
+
+    while i < len(func):
+        c = func[i]
+
+        if c in "!&*|+^()":
+            tokens.append(c)
+            i += 1
+        elif c == "'":
+            # Postfix negation: apply NOT to previous token/expression
+            # We'll handle this as a special marker
+            tokens.append("!'")
+            i += 1
+        elif c.isalnum() or c == "_":
+            # Variable name: consume all alphanumeric chars
+            j = i
+            while j < len(func) and (func[j].isalnum() or func[j] == "_"):
+                j += 1
+            tokens.append(func[i:j])
+            i = j
         else:
-            break
-    return func
+            # Skip unknown characters
+            i += 1
+
+    return tokens
 
 
-def _get_input_vars(func: str) -> set[str]:
-    """Extracts variable names from a function string."""
-    # Find all single uppercase letters that aren't operators
-    return set(re.findall(r"\b([A-Z])\b", func.upper()))
+# --- Recursive Descent Parser ---
+#
+# Grammar (with correct operator precedence):
+#   expr      = xor_term (('|' | '+') xor_term)*
+#   xor_term  = term ('^' term)*
+#   term      = factor (('&' | '*') factor)*
+#   factor    = '!' factor | primary ("!'")*
+#   primary   = '(' expr ')' | VAR
 
 
-def is_negation_only(func: str) -> bool:
-    """Checks if the function represents a pure inverter (negation)."""
-    func = _normalize_function(func)
-    # Patterns: !A, (!A), !(A), !VAR, (!VAR), !(VAR)
-    # Support multi-char variable names like A1, IN
-    patterns = [
-        r"^!([A-Za-z]\w*)$",        # !A, !A1, !IN
-        r"^\(!([A-Za-z]\w*)\)$",    # (!A), (!A1)
-        r"^!\(([A-Za-z]\w*)\)$",    # !(A), !(A1)
-    ]
-    return any(re.match(p, func, re.I) for p in patterns)
+class ParseError(Exception):
+    """Raised when parsing fails."""
 
 
-def is_identity_only(func: str) -> bool:
-    """Checks if the function represents a buffer (identity)."""
-    func = _normalize_function(func)
-    # Just a single variable: A, A1, IN
-    return bool(re.match(r"^[A-Za-z]\w*$", func))
+def _parse(tokens: list[str]) -> ASTNode:
+    """Parse tokens into an AST."""
+    pos = [0]  # Mutable position counter
+
+    def peek() -> str | None:
+        if pos[0] < len(tokens):
+            return tokens[pos[0]]
+        return None
+
+    def consume() -> str:
+        token = tokens[pos[0]]
+        pos[0] += 1
+        return token
+
+    def parse_expr() -> ASTNode:
+        """expr = xor_term (('|' | '+') xor_term)*"""
+        left = parse_xor_term()
+        while peek() in ("|", "+"):
+            consume()
+            right = parse_xor_term()
+            left = OrNode(left, right)
+        return left
+
+    def parse_xor_term() -> ASTNode:
+        """xor_term = term ('^' term)*"""
+        left = parse_term()
+        while peek() == "^":
+            consume()
+            right = parse_term()
+            left = XorNode(left, right)
+        return left
+
+    def parse_term() -> ASTNode:
+        """term = factor (('&' | '*') factor)*"""
+        left = parse_factor()
+        while peek() in ("&", "*"):
+            consume()
+            right = parse_factor()
+            left = AndNode(left, right)
+        return left
+
+    def parse_factor() -> ASTNode:
+        """factor = '!' factor | primary ("!'")*"""
+        if peek() == "!":
+            consume()
+            return NotNode(parse_factor())
+        return parse_primary()
+
+    def parse_primary() -> ASTNode:
+        """primary = '(' expr ')' | VAR, with optional postfix negation"""
+        token = peek()
+
+        if token == "(":
+            consume()  # '('
+            node = parse_expr()
+            if peek() == ")":
+                consume()  # ')'
+            # Handle postfix negation on parenthesized expression
+            while peek() == "!'":
+                consume()
+                node = NotNode(node)
+            return node
+        elif token is not None and token not in "!&*|+^()":
+            consume()
+            node: ASTNode = VarNode(token)
+            # Handle postfix negation: A' → NOT(A)
+            while peek() == "!'":
+                consume()
+                node = NotNode(node)
+            return node
+        else:
+            raise ParseError(f"Unexpected token: {token}")
+
+    if not tokens:
+        raise ParseError("Empty expression")
+
+    result = parse_expr()
+
+    # Handle any remaining postfix negations
+    while peek() == "!'":
+        consume()
+        result = NotNode(result)
+
+    return result
 
 
-def is_and_gate(func: str) -> bool:
-    """Checks if the function represents an AND gate."""
-    func = _normalize_function(func)
-    # Patterns: A&B, A*B, (A&B), A1&A2, etc.
-    # Support multi-char variable names
-    var = r"[A-Za-z]\w*"  # Variable pattern
-    patterns = [
-        rf"^\(?{var}[&*]{var}([&*]{var})?\)?$",
-    ]
-    if any(re.match(p, func, re.I) for p in patterns):
-        # Verify no negations
-        if "!" not in func:
-            return True
-    return False
+# --- Truth Table Evaluation ---
 
 
-def is_or_gate(func: str) -> bool:
-    """Checks if the function represents an OR gate."""
-    func = _normalize_function(func)
-    var = r"[A-Za-z]\w*"
-    patterns = [
-        rf"^\(?{var}[|+]{var}([|+]{var})?\)?$",
-    ]
-    if any(re.match(p, func, re.I) for p in patterns):
-        if "!" not in func:
-            return True
-    return False
+def _compute_signature(ast: ASTNode) -> tuple[int, ...]:
+    """Compute truth table signature for the AST.
+
+    Variables are sorted alphabetically for canonical ordering.
+    Returns tuple of output values for all 2^N input combinations.
+    """
+    variables = sorted(ast.get_variables())  # Canonical ordering
+
+    if len(variables) > MAX_INPUTS:
+        raise ValueError(f"Too many inputs: {len(variables)} > {MAX_INPUTS}")
+
+    if len(variables) == 0:
+        # Constant expression
+        return (ast.evaluate({}),)
+
+    results: list[int] = []
+    for i in range(2 ** len(variables)):
+        env = {var: (i >> j) & 1 for j, var in enumerate(variables)}
+        results.append(ast.evaluate(env))
+
+    return tuple(results)
 
 
-def is_nand_gate(func: str) -> bool:
-    """Checks if the function represents a NAND gate."""
-    func = _normalize_function(func)
-    var = r"[A-Za-z]\w*"
-    # Patterns: !(A&B), !(A*B), !(A1&A2)
-    patterns = [
-        rf"^!\({var}[&*]{var}([&*]{var})?\)$",
-    ]
-    return any(re.match(p, func, re.I) for p in patterns)
+# --- Signature Lookup Tables ---
+
+# 1-input signatures (2 entries)
+SIGNATURES_1: dict[tuple[int, ...], str] = {
+    (1, 0): "inverter",  # !A
+    (0, 1): "buffer",  # A
+}
+
+# 2-input signatures (4 entries: A=bit0, B=bit1)
+SIGNATURES_2: dict[tuple[int, ...], str] = {
+    (0, 0, 0, 1): "and",  # A & B
+    (0, 1, 1, 1): "or",  # A | B
+    (1, 1, 1, 0): "nand",  # !(A & B)
+    (1, 0, 0, 0): "nor",  # !(A | B)
+    (0, 1, 1, 0): "xor",  # A ^ B
+    (1, 0, 0, 1): "xnor",  # !(A ^ B)
+}
+
+# 3-input signatures (8 entries)
+SIGNATURES_3: dict[tuple[int, ...], str] = {
+    (0, 0, 0, 0, 0, 0, 0, 1): "and",  # A & B & C
+    (0, 1, 1, 1, 1, 1, 1, 1): "or",  # A | B | C
+    (1, 1, 1, 1, 1, 1, 1, 0): "nand",  # !(A & B & C)
+    (1, 0, 0, 0, 0, 0, 0, 0): "nor",  # !(A | B | C)
+}
+
+# 4-input signatures (16 entries)
+SIGNATURES_4: dict[tuple[int, ...], str] = {
+    tuple([0] * 15 + [1]): "and",  # A & B & C & D
+    tuple([0] + [1] * 15): "or",  # A | B | C | D
+    tuple([1] * 15 + [0]): "nand",  # !(A & B & C & D)
+    tuple([1] + [0] * 15): "nor",  # !(A | B | C | D)
+}
 
 
-def is_nor_gate(func: str) -> bool:
-    """Checks if the function represents a NOR gate."""
-    func = _normalize_function(func)
-    var = r"[A-Za-z]\w*"
-    # Patterns: !(A|B), !(A+B), !(A1|A2)
-    patterns = [
-        rf"^!\({var}[|+]{var}([|+]{var})?\)$",
-    ]
-    return any(re.match(p, func, re.I) for p in patterns)
+def _lookup_signature(sig: tuple[int, ...]) -> str:
+    """Look up gate type from signature."""
+    n = len(sig)
+
+    # Constant outputs
+    if all(v == 0 for v in sig):
+        return "constant"
+    if all(v == 1 for v in sig):
+        return "constant"
+
+    if n == 2:
+        return SIGNATURES_1.get(sig, "unknown")
+    elif n == 4:
+        return SIGNATURES_2.get(sig, "unknown")
+    elif n == 8:
+        return SIGNATURES_3.get(sig, "unknown")
+    elif n == 16:
+        return SIGNATURES_4.get(sig, "unknown")
+    else:
+        return "unknown"
 
 
-def is_xor_gate(func: str) -> bool:
-    """Checks if the function represents an XOR gate."""
-    func = _normalize_function(func)
-    # XOR is often written as: A^B or complex expressions
-    if "^" in func:
-        return True
-    # Also check for XOR expansion: (A&!B)|(!A&B)
-    xor_expanded = r"^\(?[A-Za-z][&*]![A-Za-z]\)?[|+]\(?![A-Za-z][&*][A-Za-z]\)?$"
-    return bool(re.match(xor_expanded, func, re.I))
+# --- Main Classification Functions ---
+
+
+@lru_cache(maxsize=2048)
+def classify_function(func: str) -> str:
+    """Classify a boolean function string by semantic analysis.
+
+    Parses the function into an AST, evaluates its truth table,
+    and looks up the signature to determine the gate type.
+
+    Args:
+        func: Boolean function string (e.g., "!(A & B)", "A | B", "!A")
+
+    Returns:
+        Gate type: 'inverter', 'buffer', 'and', 'or', 'nand', 'nor',
+                   'xor', 'xnor', 'constant', or 'unknown'
+    """
+    if not func or not func.strip():
+        return "unknown"
+
+    try:
+        tokens = _tokenize(func)
+        if not tokens:
+            return "unknown"
+
+        ast = _parse(tokens)
+        signature = _compute_signature(ast)
+        return _lookup_signature(signature)
+
+    except (ParseError, ValueError, IndexError):
+        return "unknown"
 
 
 def classify_cell(cell: "Cell") -> str:
     """Classifies a cell type based on its pin directions and logical functions.
 
-    Identifies standard gates (INV, NAND, NOR, etc.) and sequential elements (DFF, Latch).
-    Cells with complex or unrecognizable logic are labeled 'unknown'.
+    Identifies standard gates (INV, NAND, NOR, etc.) and sequential elements
+    (DFF, Latch). Cells with complex or unrecognizable logic are labeled 'unknown'.
 
     Args:
         cell: The Liberty Cell object to classify.
 
     Returns:
         A string representing the cell type: 'inverter', 'buffer', 'nand', 'nor',
-        'and', 'or', 'xor', 'flip_flop', 'latch', or 'unknown'.
+        'and', 'or', 'xor', 'xnor', 'flip_flop', 'latch', 'constant', or 'unknown'.
     """
-    # Get input/output pins by direction
-    input_pins = [p for p in cell.pins.values() if p.direction == "input"]
-    output_pins = [p for p in cell.pins.values() if p.direction == "output"]
-
     # Check for sequential elements first (ff/latch groups)
     if cell.is_sequential:
         # Check timing types for latch vs flip-flop
-        if any('latch' in str(arc.timing_type or '').lower()
-               for arc in cell.timing_arcs):
+        if any(
+            "latch" in str(arc.timing_type or "").lower() for arc in cell.timing_arcs
+        ):
             return "latch"
         return "flip_flop"
 
-    # Parse combinational functions from output pins
+    # Get output pins to analyze combinational functions
+    output_pins = [p for p in cell.pins.values() if p.direction == "output"]
+
+    # Classify based on output pin functions
     for pin in output_pins:
         if not pin.function:
             continue
 
-        func = pin.function.strip()
-        num_inputs = len(input_pins)
+        result = classify_function(pin.function.strip())
+        if result != "unknown":
+            return result
 
-        # Inverter: single input + pure negation
-        if num_inputs == 1 and is_negation_only(func):
-            return "inverter"
-
-        # Buffer: single input + identity
-        if num_inputs == 1 and is_identity_only(func):
-            return "buffer"
-
-        # Simple gates: 2-3 inputs, basic operations
-        if num_inputs in (2, 3):
-            if is_nand_gate(func):
-                return "nand"
-            if is_nor_gate(func):
-                return "nor"
-            if is_and_gate(func):
-                return "and"
-            if is_or_gate(func):
-                return "or"
-            if is_xor_gate(func):
-                return "xor"
-
-    return "unknown"  # Complex or unrecognized
+    return "unknown"
