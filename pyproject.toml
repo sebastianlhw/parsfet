@@ -23,9 +23,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sebastianlhw/Pars-FET"
-Issues = "https://github.com/sebastianlhw/Pars-FET/issues"
-Repository = "https://github.com/sebastianlhw/Pars-FET"
+Homepage = "https://github.com/sebastianlhw/parsfet"
+Issues = "https://github.com/sebastianlhw/parsfet/issues"
+Repository = "https://github.com/sebastianlhw/parsfet"
 
 [project.optional-dependencies]
 ml = ["scikit-learn>=1.3", "umap-learn>=0.5"]
@@ -33,7 +33,8 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1",
-    "setuptools-scm>=8",
+    "furo>=2023.9.10",
+    "sphinx-copybutton>=0.5.2",
 ]
 
 [project.scripts]
@@ -48,18 +49,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools_scm]
-
-[dependency-groups]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.1",
-    "setuptools-scm>=8",
-    "furo>=2023.9.10",
-    "sphinx-copybutton>=0.5.2",
-]
 
 [tool.pytest.ini_options]
 addopts = "--cov=parsfet"

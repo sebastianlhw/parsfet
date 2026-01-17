@@ -53,7 +53,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
 
         return library
 
-    def parse_library_dir(self, path: Path, corner: str = "tt_025C_1v80") -> LibertyLibrary:
+    def parse_library_dir(self, path: Path, corner: str = "tt_025C_1v80", lib_name: Optional[str] = None) -> LibertyLibrary:
         """Parses a complete library directory (e.g., SkyWater PDK style).
 
         Expects a directory structure with a 'timing' folder for headers and a 'cells'
@@ -62,12 +62,14 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
         Args:
             path: Path to the library root directory.
             corner: The specific PVT corner to parse (e.g., "tt_025C_1v80").
+            lib_name: Explicit library name. If None, inferred from path.name.
 
         Returns:
             A populated LibertyLibrary object containing all found cells for the corner.
         """
         # Determine library name from path
-        lib_name = path.name
+        if not lib_name:
+            lib_name = path.name
 
         # Try to load library header
         library = LibertyLibrary(name=lib_name)
@@ -166,9 +168,16 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
                         power_arc = self._build_power_arc(power_data)
                         cell.power_arcs.append(power_arc)
 
-        # Check for sequential markers
         if "ff," in str(data.keys()) or "latch," in str(data.keys()):
             cell.is_sequential = True
+
+        # Calculate worst-case leakage power
+        max_leakage = cell.cell_leakage_power or 0.0
+        for entry in cell.leakage_power_values:
+            val = entry.get("value", 0.0)
+            if val > max_leakage:
+                max_leakage = val
+        cell.cell_leakage_power = max_leakage
 
         return cell
 

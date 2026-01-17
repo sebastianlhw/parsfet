@@ -332,6 +332,14 @@ class LibertyParser(BaseParser[LibertyLibrary]):
                     }
                 )
 
+        # Calculate worst-case leakage power
+        max_leakage = cell.cell_leakage_power or 0.0
+        for entry in cell.leakage_power_values:
+            val = entry.get("value", 0.0)
+            if val > max_leakage:
+                max_leakage = val
+        cell.cell_leakage_power = max_leakage
+
         return cell
 
     def _build_pin(self, ast: dict[str, Any]) -> Pin:
