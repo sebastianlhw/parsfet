@@ -112,9 +112,9 @@ This project is licensed under the MIT License. You are free to use, modify, and
 
 This project uses partial files from the following open-source projects for testing purposes:
 
-- **SkyWater 130nm PDK**: Licensed under [Apache License 2.0](testdata/skywater/skywater-pdk/LICENSE).
+- **SkyWater 130nm PDK**: Licensed under [Apache License 2.0](https://github.com/google/skywater-pdk/blob/main/LICENSE).
   - Source: [google/skywater-pdk](https://github.com/google/skywater-pdk)
-- **ASAP7 PDK**: Licensed under [BSD 3-Clause License](testdata/asap7/LICENSE).
+- **ASAP7 PDK**: Licensed under [BSD 3-Clause License](https://github.com/The-OpenROAD-Project/asap7/blob/main/LICENSE).
   - Source: [The-OpenROAD-Project/asap7](https://github.com/The-OpenROAD-Project/asap7)
 
 See corresponding `LICENSE` files for full terms.
