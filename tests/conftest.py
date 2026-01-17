@@ -1,7 +1,9 @@
-import pytest
-from pathlib import Path
 import tempfile
 import textwrap
+from pathlib import Path
+
+import pytest
+
 
 @pytest.fixture
 def sample_liberty_content():
@@ -81,6 +83,7 @@ def sample_liberty_content():
     }
     """)
 
+
 @pytest.fixture
 def sample_lef_content():
     return textwrap.dedent("""
@@ -152,17 +155,19 @@ def sample_lef_content():
     END INV_X1
     """)
 
+
 @pytest.fixture
 def sample_liberty_file(sample_liberty_content):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.lib', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(sample_liberty_content)
         path = Path(f.name)
     yield path
     path.unlink()
 
+
 @pytest.fixture
 def sample_lef_file(sample_lef_content):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.lef', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".lef", delete=False) as f:
         f.write(sample_lef_content)
         path = Path(f.name)
     yield path

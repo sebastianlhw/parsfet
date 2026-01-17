@@ -61,10 +61,7 @@ class CellPhysical:
     @classmethod
     def from_macro(cls, macro: Macro) -> CellPhysical:
         """Create from a LEF Macro model."""
-        pins = {
-            name: PinPhysical.from_macro_pin(pin)
-            for name, pin in macro.pins.items()
-        }
+        pins = {name: PinPhysical.from_macro_pin(pin) for name, pin in macro.pins.items()}
         return cls(
             name=macro.name,
             width=macro.width,
@@ -127,8 +124,7 @@ class TechInfo:
     def from_tech_lef(cls, tech_lef: TechLEF) -> TechInfo:
         """Create from a TechLEF model."""
         layers = {
-            name: LayerInfo.from_metal_layer(layer)
-            for name, layer in tech_lef.layers.items()
+            name: LayerInfo.from_metal_layer(layer) for name, layer in tech_lef.layers.items()
         }
         return cls(
             layers=layers,

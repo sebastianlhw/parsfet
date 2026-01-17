@@ -14,8 +14,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-from ..models.liberty import (Cell, LibertyLibrary, LookupTable, Pin, PowerArc,
-                              TimingArc)
+from ..models.liberty import Cell, LibertyLibrary, LookupTable, Pin, PowerArc, TimingArc
 from .base import BaseParser
 
 
@@ -26,13 +25,16 @@ class LibertyParser(BaseParser[LibertyLibrary]):
     """
 
     # Pre-compiled token pattern for Liberty format
-    _TOKEN_PATTERN = re.compile(r"""
+    _TOKEN_PATTERN = re.compile(
+        r"""
         "(?:[^"\\]|\\.)*"             # Quoted string (with escapes)
         |'(?:[^'\\]|\\.)*'            # Single-quoted string
         |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number
         |[a-zA-Z_][a-zA-Z0-9_\.\[\]]*  # Identifier (including array notation)
         |[{}();:,\\]                   # Punctuation
-    """, re.VERBOSE)
+    """,
+        re.VERBOSE,
+    )
 
     def parse(self, path: Path) -> LibertyLibrary:
         """Parses a Liberty file from a given path.
@@ -582,13 +584,13 @@ class LibertyParser(BaseParser[LibertyLibrary]):
 
         # Handle group format: e.g. technology(cmos) -> [{'_name': 'technology', '_qualifier': 'cmos'}]
         if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict):
-             return val[0].get("_qualifier", default)
+            return val[0].get("_qualifier", default)
 
         if isinstance(val, str):
             # Clean up trailing semicolons if they got attached (due to tokenizer)
             val = val.strip().rstrip(";")
             val = val.strip("\"'")
-            if not val and default: # Fallback to default if empty string?
+            if not val and default:  # Fallback to default if empty string?
                 # No, if explicit empty string, return it. But here it might be parsing issue.
                 pass
             return val

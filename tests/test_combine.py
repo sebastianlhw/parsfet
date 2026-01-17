@@ -1,9 +1,10 @@
 """Tests for multi-file combining functionality in parsfet.data module."""
 
-import pytest
 import tempfile
 import textwrap
 from pathlib import Path
+
+import pytest
 
 from parsfet.data import Dataset, load_files
 from parsfet.exceptions import DuplicateCellError
@@ -204,7 +205,7 @@ def lib3_duplicate_content():
 
 @pytest.fixture
 def lib1_file(lib1_content):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.lib', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(lib1_content)
         path = Path(f.name)
     yield path
@@ -213,7 +214,7 @@ def lib1_file(lib1_content):
 
 @pytest.fixture
 def lib2_file(lib2_content):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.lib', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(lib2_content)
         path = Path(f.name)
     yield path
@@ -222,7 +223,7 @@ def lib2_file(lib2_content):
 
 @pytest.fixture
 def lib3_file(lib3_duplicate_content):
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.lib', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(lib3_duplicate_content)
         path = Path(f.name)
     yield path

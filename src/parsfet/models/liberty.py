@@ -553,8 +553,10 @@ class LibertyLibrary(BaseModel):
         # Final fallback: use classifier to find inverters by logic function
         try:
             from ..normalizers.classifier import classify_cell
+
             classified_inverters = [
-                cell for cell in self.cells.values()
+                cell
+                for cell in self.cells.values()
                 if classify_cell(cell) == "inverter" and cell.area > 0
             ]
             if classified_inverters:

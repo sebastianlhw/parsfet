@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..models.common import OperatingCondition, ProcessCorner
-from ..models.liberty import (Cell, LibertyLibrary, LookupTable, Pin, PowerArc,
-                              TimingArc)
+from ..models.liberty import Cell, LibertyLibrary, LookupTable, Pin, PowerArc, TimingArc
 from .base import BaseParser
 
 
@@ -53,7 +52,9 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
 
         return library
 
-    def parse_library_dir(self, path: Path, corner: str = "tt_025C_1v80", lib_name: Optional[str] = None) -> LibertyLibrary:
+    def parse_library_dir(
+        self, path: Path, corner: str = "tt_025C_1v80", lib_name: Optional[str] = None
+    ) -> LibertyLibrary:
         """Parses a complete library directory (e.g., SkyWater PDK style).
 
         Expects a directory structure with a 'timing' folder for headers and a 'cells'

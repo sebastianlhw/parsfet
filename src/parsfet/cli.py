@@ -206,8 +206,12 @@ def normalize(
     lib_file: Path = typer.Argument(..., help="Path to Liberty file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
-    lef: Optional[list[Path]] = typer.Option(None, "--lef", "-l", help="LEF file(s) for physical data"),
-    tech_lef: Optional[Path] = typer.Option(None, "--tech-lef", "-t", help="TechLEF file for technology rules"),
+    lef: Optional[list[Path]] = typer.Option(
+        None, "--lef", "-l", help="LEF file(s) for physical data"
+    ),
+    tech_lef: Optional[Path] = typer.Option(
+        None, "--tech-lef", "-t", help="TechLEF file for technology rules"
+    ),
 ):
     """Normalizes library metrics to the INVD1 baseline.
 
@@ -288,8 +292,7 @@ def normalize(
                 f"[bold]D0 Ratios:[/]\n"
                 f"  Mean: {summary['d0_ratio_stats'].get('mean', 0):.2f}\n"
                 f"  Min: {summary['d0_ratio_stats'].get('min', 0):.2f}\n"
-                f"  Max: {summary['d0_ratio_stats'].get('max', 0):.2f}"
-                + phys_info,
+                f"  Max: {summary['d0_ratio_stats'].get('max', 0):.2f}" + phys_info,
                 title="Normalization Summary",
             )
         )
@@ -363,8 +366,7 @@ def compare(
             raise typer.Exit(1)
 
     from .comparators.cell_diff import compare_cell_coverage
-    from .comparators.fingerprint import (compare_fingerprints,
-                                          create_fingerprint)
+    from .comparators.fingerprint import compare_fingerprints, create_fingerprint
     from .parsers.liberty import LibertyParser
 
     parser = LibertyParser()
@@ -522,11 +524,17 @@ def export(
 @app.command()
 def combine(
     lib_files: list[Path] = typer.Argument(..., help="Liberty files to combine"),
-    lef: Optional[list[Path]] = typer.Option(None, "--lef", "-l", help="LEF file(s) for physical data"),
+    lef: Optional[list[Path]] = typer.Option(
+        None, "--lef", "-l", help="LEF file(s) for physical data"
+    ),
     tech_lef: Optional[Path] = typer.Option(None, "--tech-lef", "-t", help="TechLEF file"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
-    check_duplicates: bool = typer.Option(False, "--check-duplicates", help="Only report duplicates, don't output"),
-    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicates (first wins)"),
+    check_duplicates: bool = typer.Option(
+        False, "--check-duplicates", help="Only report duplicates, don't output"
+    ),
+    allow_duplicates: bool = typer.Option(
+        False, "--allow-duplicates", help="Allow duplicates (first wins)"
+    ),
 ):
     """Combines multiple Liberty files into one unified dataset.
 
@@ -587,11 +595,15 @@ def combine(
             console.print(f"  ... and {len(duplicates) - 10} more")
 
         if check_duplicates:
-            console.print("\n[blue]Use --allow-duplicates to proceed with first-occurrence-wins.[/blue]")
+            console.print(
+                "\n[blue]Use --allow-duplicates to proceed with first-occurrence-wins.[/blue]"
+            )
             raise typer.Exit(0)
 
         if not allow_duplicates:
-            console.print("\n[red]Error:[/red] Duplicate cells found. Use --allow-duplicates to proceed.")
+            console.print(
+                "\n[red]Error:[/red] Duplicate cells found. Use --allow-duplicates to proceed."
+            )
             raise typer.Exit(1)
 
     # Combine with unified normalization

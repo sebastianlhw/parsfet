@@ -1,5 +1,7 @@
-from parsfet.cli import detect_format
 from pathlib import Path
+
+from parsfet.cli import detect_format
+
 
 def test_detect_format():
     assert detect_format(Path("foo.lib")) == "lib"

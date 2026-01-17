@@ -25,7 +25,9 @@ class DuplicateCellError(Exception):
             files = ", ".join(str(p) for _, p in sources)
             lines.append(f"  - {cell}: {files}")
         lines.append("")
-        lines.append("Use allow_duplicates=True to keep first occurrence, or rename cells before combining.")
+        lines.append(
+            "Use allow_duplicates=True to keep first occurrence, or rename cells before combining."
+        )
         return "\n".join(lines)
 
     def cell_names(self) -> list[str]:

@@ -10,7 +10,6 @@ the FO4 (Fanout-of-4) operating point.
 """
 
 from dataclasses import dataclass
-
 from typing import Optional
 
 from ..models.liberty import Cell, LibertyLibrary
@@ -47,8 +46,8 @@ class NormalizedMetrics:
 
     # Core ratios
     area_ratio: float = 1.0  # cell_area / invd1_area
-    d0_ratio: float = 1.0    # cell.D₀ / invd1.D₀ (intrinsic delay ratio)
-    k_ratio: float = 1.0     # cell.k / invd1.k (load slope ratio)
+    d0_ratio: float = 1.0  # cell.D₀ / invd1.D₀ (intrinsic delay ratio)
+    k_ratio: float = 1.0  # cell.k / invd1.k (load slope ratio)
     leakage_ratio: float = 1.0  # cell_leakage / invd1_leakage
     input_cap_ratio: float = 1.0  # input_cap / invd1_input_cap
 
@@ -60,14 +59,14 @@ class NormalizedMetrics:
 
     # Raw values for reference (in canonical units: ns, pF)
     raw_area: float = 0.0
-    raw_d0_ns: float = 0.0      # Intrinsic delay (zero-load)
+    raw_d0_ns: float = 0.0  # Intrinsic delay (zero-load)
     raw_k_ns_per_pf: float = 0.0  # Load slope
     raw_leakage: float = 0.0
     raw_input_cap: float = 0.0
 
     # Fit quality metrics
-    fit_r_squared: float = 1.0      # R² of linear fit (1.0 = perfect)
-    fit_residual_pct: float = 0.0   # Signed residual at FO4 (%, positive = pessimistic)
+    fit_r_squared: float = 1.0  # R² of linear fit (1.0 = perfect)
+    fit_residual_pct: float = 0.0  # Signed residual at FO4 (%, positive = pessimistic)
 
     def to_dict(self) -> dict:
         """Converts the normalized metrics to a dictionary for JSON serialization."""
@@ -129,7 +128,7 @@ class BaselineMetrics:
     cell_name: str
     area: float
     d0: float  # D₀: intrinsic delay (zero-load) in ns
-    k: float   # k: load slope in ns/pF
+    k: float  # k: load slope in ns/pF
     leakage: float
     input_cap: float  # Total input capacitance
     # FO4 operating point
@@ -206,7 +205,12 @@ class INVD1Normalizer:
         d0 = self.unit_normalizer.normalize_time(d0_raw)
         # k is time/capacitance, so normalize both dimensions
         # k_canonical = k_raw * (time_scale / cap_scale)
-        k = self.unit_normalizer.normalize_time(k_raw) / self.unit_normalizer.normalize_capacitance(1.0) if k_raw > 0 else 0.0
+        k = (
+            self.unit_normalizer.normalize_time(k_raw)
+            / self.unit_normalizer.normalize_capacitance(1.0)
+            if k_raw > 0
+            else 0.0
+        )
 
         # Leakage power (no conversion for now)
         leakage = cell.cell_leakage_power if cell.cell_leakage_power else 1.0
@@ -263,9 +267,13 @@ class INVD1Normalizer:
 
         raw_d0_ns = self.unit_normalizer.normalize_time(d0_raw) if d0_raw > 0 else 0.0
         raw_k_ns_per_pf = (
-            self.unit_normalizer.normalize_time(k_raw) /
-            self.unit_normalizer.normalize_capacitance(1.0)
-        ) if k_raw > 0 else 0.0
+            (
+                self.unit_normalizer.normalize_time(k_raw)
+                / self.unit_normalizer.normalize_capacitance(1.0)
+            )
+            if k_raw > 0
+            else 0.0
+        )
 
         raw_leakage = cell.cell_leakage_power if cell.cell_leakage_power else 0.0
 
@@ -286,7 +294,11 @@ class INVD1Normalizer:
         # Compute ratios (both are now in canonical units)
         area_ratio = raw_area / self.baseline.area if self.baseline.area > 0 else 0.0
         d0_ratio = raw_d0_ns / self.baseline.d0 if self.baseline.d0 > 0 and raw_d0_ns > 0 else 1.0
-        k_ratio = raw_k_ns_per_pf / self.baseline.k if self.baseline.k > 0 and raw_k_ns_per_pf > 0 else 1.0
+        k_ratio = (
+            raw_k_ns_per_pf / self.baseline.k
+            if self.baseline.k > 0 and raw_k_ns_per_pf > 0
+            else 1.0
+        )
         leakage_ratio = raw_leakage / self.baseline.leakage if self.baseline.leakage > 0 else 0.0
         input_cap_ratio = (
             raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0

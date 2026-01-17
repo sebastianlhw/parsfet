@@ -33,13 +33,13 @@ class TechnologyFingerprint:
     baseline_cell: str = ""
     baseline_area: float = 0.0
     baseline_d0: float = 0.0  # Intrinsic delay (D₀)
-    baseline_k: float = 0.0   # Load slope (k)
+    baseline_k: float = 0.0  # Load slope (k)
     baseline_leakage: float = 0.0
 
     # Statistical summaries of normalized metrics
     mean_area_ratio: float = 0.0
     mean_d0_ratio: float = 0.0  # Intrinsic delay ratio
-    mean_k_ratio: float = 0.0   # Load slope ratio
+    mean_k_ratio: float = 0.0  # Load slope ratio
     mean_leakage_ratio: float = 0.0
 
     std_area_ratio: float = 0.0
@@ -315,8 +315,6 @@ def compare_fingerprints(fp_a: TechnologyFingerprint, fp_b: TechnologyFingerprin
             "d0_ratio_diff": fp_a.mean_d0_ratio - fp_b.mean_d0_ratio,
             "k_ratio_diff": fp_a.mean_k_ratio - fp_b.mean_k_ratio,
             "cell_count_diff": fp_a.total_cells - fp_b.total_cells,
-            "baseline_d0_ratio": fp_a.baseline_d0 / fp_b.baseline_d0
-            if fp_b.baseline_d0 > 0
-            else 0,
+            "baseline_d0_ratio": fp_a.baseline_d0 / fp_b.baseline_d0 if fp_b.baseline_d0 > 0 else 0,
         },
     }

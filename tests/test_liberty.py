@@ -1,7 +1,10 @@
-import pytest
 from pathlib import Path
+
+import pytest
+
+from parsfet.models.liberty import Cell, LibertyLibrary, LookupTable
 from parsfet.parsers.liberty import LibertyParser
-from parsfet.models.liberty import LibertyLibrary, Cell, LookupTable
+
 
 def test_parse_liberty_library_attributes(sample_liberty_content):
     parser = LibertyParser()
@@ -17,6 +20,7 @@ def test_parse_liberty_library_attributes(sample_liberty_content):
     assert lib.nom_process == 1.0
     assert lib.nom_temperature == 25.0
     assert lib.nom_voltage == 1.2
+
 
 def test_parse_cells_and_pins(sample_liberty_content):
     parser = LibertyParser()
@@ -41,6 +45,7 @@ def test_parse_cells_and_pins(sample_liberty_content):
     assert dff.is_sequential
     assert dff.pins["CLK"].clock is True
 
+
 def test_timing_arcs_and_lut(sample_liberty_content):
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
@@ -62,11 +67,9 @@ def test_timing_arcs_and_lut(sample_liberty_content):
     assert len(arc.cell_rise.values) == 5
     assert len(arc.cell_rise.values[0]) == 5
 
+
 def test_lut_interpolation_1d():
-    lut = LookupTable(
-        index_1=[0.1, 0.5, 1.0],
-        values=[0.1, 0.5, 1.0]
-    )
+    lut = LookupTable(index_1=[0.1, 0.5, 1.0], values=[0.1, 0.5, 1.0])
 
     # Exact match
     assert lut.interpolate(0.5) == 0.5
@@ -78,6 +81,7 @@ def test_lut_interpolation_1d():
     assert lut.interpolate(0.0) == 0.1
     assert lut.interpolate(2.0) == 1.0
 
+
 def test_lut_interpolation_2d():
     # Simple bilinear surface: z = x + y
     lut = LookupTable(
@@ -85,8 +89,8 @@ def test_lut_interpolation_2d():
         index_2=[0.0, 1.0],
         values=[
             [0.0, 1.0],  # x=0: z=0, z=1
-            [1.0, 2.0]   # x=1: z=1, z=2
-        ]
+            [1.0, 2.0],  # x=1: z=1, z=2
+        ],
     )
 
     # Corners
@@ -100,14 +104,18 @@ def test_lut_interpolation_2d():
     assert pytest.approx(lut.interpolate(0.5, 0.0)) == 0.5
     assert pytest.approx(lut.interpolate(0.0, 0.5)) == 0.5
 
+
 def test_parse_from_file(sample_liberty_file):
     parser = LibertyParser()
     lib = parser.parse(sample_liberty_file)
-    assert lib.name == "test_lib" # Name comes from content parsing, but if parse_string is called, it might use file stem if name not in file?
+    assert (
+        lib.name == "test_lib"
+    )  # Name comes from content parsing, but if parse_string is called, it might use file stem if name not in file?
     # Actually parser.parse passes name=path.stem. But inside parse_string, if _qualifier is found, it overrides.
     # In our sample content: library(test_lib). So name should be test_lib.
 
     assert "INV_X1" in lib.cells
+
 
 def test_unit_normalizer(sample_liberty_content):
     parser = LibertyParser()
@@ -123,8 +131,9 @@ def test_unit_normalizer(sample_liberty_content):
     assert normalizer.cap_multiplier == 1.0
 
     # Test with different units
-    content_ps_ff = sample_liberty_content.replace('time_unit : "1ns"', 'time_unit : "1ps"') \
-                                          .replace('capacitive_load_unit (1.0, pf)', 'capacitive_load_unit (1.0, ff)')
+    content_ps_ff = sample_liberty_content.replace(
+        'time_unit : "1ns"', 'time_unit : "1ps"'
+    ).replace("capacitive_load_unit (1.0, pf)", "capacitive_load_unit (1.0, ff)")
     lib2 = parser.parse_string(content_ps_ff)
     norm2 = lib2.unit_normalizer
 
@@ -132,6 +141,7 @@ def test_unit_normalizer(sample_liberty_content):
     assert pytest.approx(norm2.time_multiplier) == 0.001
     # 1ff -> 0.001pf
     assert pytest.approx(norm2.cap_multiplier) == 0.001
+
 
 def test_fo4_calculation(sample_liberty_content):
     parser = LibertyParser()
@@ -147,20 +157,20 @@ def test_fo4_calculation(sample_liberty_content):
     # Since 0.008 is small (between 0.001 and 0.01 in index_2), it will interpolate.
     assert slew > 0
 
+
 def test_linear_model_fit():
     # Model: D = 0.1 + 0.5 * Load
     lut = LookupTable(
-        index_1=[0.1], # Fixed slew
+        index_1=[0.1],  # Fixed slew
         index_2=[0.0, 1.0, 2.0],
-        values=[
-            [0.1, 0.6, 1.1]
-        ]
+        values=[[0.1, 0.6, 1.1]],
     )
 
     d0, k, r_squared = lut.fit_linear_model(0.1)
     assert pytest.approx(d0) == 0.1
     assert pytest.approx(k) == 0.5
     assert pytest.approx(r_squared) == 1.0  # Perfect linear fit
+
 
 def test_missing_baseline_cell(sample_liberty_content):
     # Rename INV_X1 to OTHER_X1.

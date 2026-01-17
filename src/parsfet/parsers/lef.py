@@ -11,8 +11,18 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from ..models.lef import (LayerDirection, LayerType, LEFLibrary, Macro,
-                          MacroPin, MetalLayer, Rect, Site, TechLEF, Via)
+from ..models.lef import (
+    LayerDirection,
+    LayerType,
+    LEFLibrary,
+    Macro,
+    MacroPin,
+    MetalLayer,
+    Rect,
+    Site,
+    TechLEF,
+    Via,
+)
 from .base import BaseParser
 
 
@@ -24,14 +34,16 @@ class LEFParser(BaseParser[LEFLibrary]):
     """
 
     # Pre-compiled token pattern for lexing
-    _TOKEN_PATTERN = re.compile(r"""
+    _TOKEN_PATTERN = re.compile(
+        r"""
         "(?:[^"\\]|\\.)*"             # Double-quoted string
         |'(?:[^'\\]|\\.)*'            # Single-quoted string
         |[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?  # Number
         |[a-zA-Z_][a-zA-Z0-9_\.\[\]]*  # Identifier
         |[;()]                         # Punctuation
-    """, re.VERBOSE)
-
+    """,
+        re.VERBOSE,
+    )
 
     def parse(self, path: Path) -> LEFLibrary:
         """Parses a LEF file from a given path.
@@ -384,13 +396,7 @@ class LEFParser(BaseParser[LEFLibrary]):
                     self._consume()
                 self._skip_semicolon()
 
-        return Site(
-            name=name,
-            class_type=class_type,
-            width=width,
-            height=height,
-            symmetry=symmetry
-        )
+        return Site(name=name, class_type=class_type, width=width, height=height, symmetry=symmetry)
 
     def _parse_macro(self) -> Macro:
         """Parses MACRO ... END <name> block."""
@@ -470,7 +476,13 @@ class LEFParser(BaseParser[LEFLibrary]):
             else:
                 # Skip unknown macro properties
                 self._consume()
-                while self._peek() and self._peek() != ";" and self._peek().upper() != "END" and self._peek().upper() != "PIN" and self._peek().upper() != "OBS":
+                while (
+                    self._peek()
+                    and self._peek() != ";"
+                    and self._peek().upper() != "END"
+                    and self._peek().upper() != "PIN"
+                    and self._peek().upper() != "OBS"
+                ):
                     self._consume()
                 self._skip_semicolon()
 
@@ -483,7 +495,7 @@ class LEFParser(BaseParser[LEFLibrary]):
             site=site,
             foreign=foreign,
             pins=pins,
-            obstructions=obstructions
+            obstructions=obstructions,
         )
 
     def _parse_macro_pin(self) -> MacroPin:
@@ -532,17 +544,16 @@ class LEFParser(BaseParser[LEFLibrary]):
             else:
                 # Skip unknown pin properties
                 self._consume()
-                while self._peek() and self._peek() != ";" and self._peek().upper() != "END" and self._peek().upper() != "PORT":
+                while (
+                    self._peek()
+                    and self._peek() != ";"
+                    and self._peek().upper() != "END"
+                    and self._peek().upper() != "PORT"
+                ):
                     self._consume()
                 self._skip_semicolon()
 
-        return MacroPin(
-            name=name,
-            direction=direction,
-            use=use,
-            shape=shape,
-            ports=ports
-        )
+        return MacroPin(name=name, direction=direction, use=use, shape=shape, ports=ports)
 
     def _parse_port(self) -> list[Rect]:
         """Parses PORT ... END block within a pin."""

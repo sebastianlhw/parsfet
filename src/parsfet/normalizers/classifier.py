@@ -374,9 +374,7 @@ def classify_cell(cell: "Cell") -> str:
     # Check for sequential elements first (ff/latch groups)
     if cell.is_sequential:
         # Check timing types for latch vs flip-flop
-        if any(
-            "latch" in str(arc.timing_type or "").lower() for arc in cell.timing_arcs
-        ):
+        if any("latch" in str(arc.timing_type or "").lower() for arc in cell.timing_arcs):
             return "latch"
         return "flip_flop"
 

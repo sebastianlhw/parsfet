@@ -1,12 +1,13 @@
 """Tests for the boolean expression classifier."""
 
 import pytest
+
 from parsfet.normalizers.classifier import (
-    classify_function,
-    classify_cell,
-    _tokenize,
-    _parse,
     _compute_signature,
+    _parse,
+    _tokenize,
+    classify_cell,
+    classify_function,
 )
 
 

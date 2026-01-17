@@ -1,10 +1,10 @@
 """Tests for parsfet.data module."""
 
-import pytest
 import numpy as np
 import pandas as pd
+import pytest
 
-from parsfet.data import Dataset, load_files, load_from_pattern, FEATURE_COLUMNS
+from parsfet.data import FEATURE_COLUMNS, Dataset, load_files, load_from_pattern
 
 
 def test_load_files_single(sample_liberty_file):
@@ -104,6 +104,7 @@ def test_feature_columns_count():
 
 # --- Integration tests for LEF/TechLEF loading ---
 
+
 def test_load_tech_lef(sample_liberty_file, sample_lef_file):
     """Test loading TechLEF adds tech_info to entries."""
     ds = Dataset()
@@ -186,5 +187,3 @@ def test_export_to_json_empty():
     ds = Dataset()
     data = ds.export_to_json()
     assert "error" in data
-
-

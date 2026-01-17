@@ -26,15 +26,15 @@ from typing import TYPE_CHECKING, Callable, Optional
 import numpy as np
 import pandas as pd
 
-from .parsers.liberty import LibertyParser
-from .parsers.lef import LEFParser, TechLEFParser
-from .normalizers.invd1 import INVD1Normalizer, NormalizedMetrics
-from .models.physical import CellPhysical, TechInfo
 from .exceptions import DuplicateCellError
+from .models.physical import CellPhysical, TechInfo
+from .normalizers.invd1 import INVD1Normalizer, NormalizedMetrics
+from .parsers.lef import LEFParser, TechLEFParser
+from .parsers.liberty import LibertyParser
 
 if TYPE_CHECKING:
-    from .models.liberty import LibertyLibrary
     from .models.lef import LEFLibrary, TechLEF
+    from .models.liberty import LibertyLibrary
 
 
 # Feature columns used by to_numpy() - matches NormalizedMetrics.to_feature_vector()
@@ -220,11 +220,7 @@ class Dataset:
                 cell_sources[cell_name].append((idx, source))
 
         # Filter to only cells appearing in multiple entries
-        return {
-            name: sources
-            for name, sources in cell_sources.items()
-            if len(sources) > 1
-        }
+        return {name: sources for name, sources in cell_sources.items() if len(sources) > 1}
 
     def combine(self, allow_duplicates: bool = False) -> "Dataset":
         """Combine all entries into ONE grand dataset with unified normalization.
@@ -261,7 +257,7 @@ class Dataset:
 
         # Merge all cells into a combined library
         # Use first entry as base and merge cells from others
-        from .models.liberty import LibertyLibrary, Cell
+        from .models.liberty import Cell, LibertyLibrary
 
         base_entry = self.entries[0]
         combined_cells: dict[str, Cell] = {}
