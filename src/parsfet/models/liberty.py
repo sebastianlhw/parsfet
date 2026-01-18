@@ -8,11 +8,25 @@ interpolation, delay calculation, and linear model fitting.
 from typing import Any, Optional
 
 import numpy as np
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_validator
 from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import linregress
 
 from .common import OperatingCondition, UnitNormalizer, VtFlavor
+
+# Valid timing_type values per Liberty specification
+VALID_TIMING_TYPES = frozenset({
+    "combinational", "combinational_rise", "combinational_fall",
+    "rising_edge", "falling_edge", "preset", "clear",
+    "three_state_enable", "three_state_disable", "three_state_enable_rise",
+    "three_state_enable_fall", "three_state_disable_rise", "three_state_disable_fall",
+    "setup_rising", "setup_falling", "hold_rising", "hold_falling",
+    "recovery_rising", "recovery_falling", "removal_rising", "removal_falling",
+    "min_pulse_width", "minimum_period", "skew_rising", "skew_falling",
+    "non_seq_setup_rising", "non_seq_setup_falling", 
+    "non_seq_hold_rising", "non_seq_hold_falling",
+    "nochange_high_high", "nochange_high_low", "nochange_low_high", "nochange_low_low",
+})
 
 
 class LookupTable(BaseModel):
@@ -167,8 +181,11 @@ class Pin(BaseModel):
         min_capacitance: Minimum load capacitance.
         function: Boolean function expression (for output pins).
         clock: True if the pin is a clock pin.
+        clock_gate_clock_pin: True if this is a clock gating cell's clock pin.
+        clock_gate_enable_pin: True if this is a clock gating cell's enable pin.
         rise_capacitance: Capacitance for rising transitions.
         fall_capacitance: Capacitance for falling transitions.
+        undefined_attributes: Dictionary of attributes not explicitly modeled.
     """
 
     name: str
@@ -179,9 +196,16 @@ class Pin(BaseModel):
     function: Optional[str] = Field(default=None, description="Boolean function expression")
     clock: bool = False
 
+    # Clock gating attributes
+    clock_gate_clock_pin: bool = Field(default=False, description="True if this is a clock gating clock pin")
+    clock_gate_enable_pin: bool = Field(default=False, description="True if this is a clock gating enable pin")
+
     # Power attributes
     rise_capacitance: Optional[float] = None
     fall_capacitance: Optional[float] = None
+
+    # Track undefined attributes found during parsing
+    undefined_attributes: dict[str, Any] = Field(default_factory=dict, description="Attributes not explicitly modeled")
 
     model_config = {"extra": "allow"}
 
@@ -219,6 +243,17 @@ class TimingArc(BaseModel):
     # Constraint tables (for sequential cells)
     rise_constraint: Optional[LookupTable] = None
     fall_constraint: Optional[LookupTable] = None
+
+    @field_validator('timing_type', mode='before')
+    @classmethod
+    def validate_timing_type(cls, v: Optional[str]) -> Optional[str]:
+        """Validates timing_type against Liberty specification."""
+        import logging
+        if v is not None and v not in VALID_TIMING_TYPES:
+            logging.getLogger(__name__).warning(
+                f"Unknown timing_type '{v}'. Valid values: {sorted(VALID_TIMING_TYPES)[:5]}..."
+            )
+        return v
 
     @property
     def representative_delay(self) -> float:
@@ -319,6 +354,9 @@ class Cell(BaseModel):
         dont_use: Flag indicating the cell should not be used for synthesis.
         dont_touch: Flag indicating the cell should not be modified.
         is_sequential: True if the cell contains state elements (FF, Latch).
+        clock_gating_integrated_cell: Type of clock gating cell (e.g., 'latch_posedge').
+        is_clock_gating_cell: True if this is an integrated clock gating cell.
+        undefined_attributes: Dictionary of attributes not explicitly modeled.
         attributes: Additional unparsed attributes.
     """
 
@@ -332,6 +370,10 @@ class Cell(BaseModel):
     )
 
     pins: dict[str, Pin] = Field(default_factory=dict)
+    pg_pins: dict[str, dict[str, Any]] = Field(
+        default_factory=dict, 
+        description="Power/ground pins (VDD, VSS) with pg_type info"
+    )
     timing_arcs: list[TimingArc] = Field(default_factory=list)
     power_arcs: list[PowerArc] = Field(default_factory=list)
 
@@ -339,6 +381,24 @@ class Cell(BaseModel):
     dont_use: bool = False
     dont_touch: bool = False
     is_sequential: bool = False
+
+    # Clock gating attributes
+    clock_gating_integrated_cell: Optional[str] = Field(
+        default=None, 
+        description="Type of integrated clock gating cell (e.g., 'latch_posedge', 'latch_posedge_precontrol')"
+    )
+    
+    @computed_field
+    @property
+    def is_clock_gating_cell(self) -> bool:
+        """Returns True if this is an integrated clock gating cell."""
+        return self.clock_gating_integrated_cell is not None
+
+    # Track undefined attributes found during parsing
+    undefined_attributes: dict[str, Any] = Field(
+        default_factory=dict, 
+        description="Attributes not explicitly modeled"
+    )
 
     # Raw attributes for completeness
     attributes: dict[str, Any] = Field(default_factory=dict)

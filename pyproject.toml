@@ -22,6 +22,7 @@ dependencies = [
     "matplotlib>=3.7",
     "scipy>=1.10",
     "liberty-parser>=0.0.29",
+    "lark>=1.3.1",
 ]
 
 [project.urls]
