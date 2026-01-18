@@ -1,0 +1,176 @@
+// LEF (.lef) Format Grammar for Lark
+//
+// This grammar handles the hierarchical structure of LEF files including:
+// - VERSION, UNITS definitions
+// - LAYER, VIA, SITE definitions
+// - MACRO definitions with pins and obstructions
+// - Comments (# line, /* */ block)
+//
+// NOTE: LEF uses case-insensitive keywords (use "keyword"i syntax)
+
+start: statement*
+
+// Top-level statements
+statement: version_stmt
+         | units_block
+         | manufacturing_grid
+         | layer_block
+         | via_block
+         | viarule_block
+         | site_block
+         | macro_block
+         | property_stmt
+         | busbitchars_stmt
+         | dividerchar_stmt
+         | "END"i NAME?
+         | unknown_stmt
+
+// Catch-all for TechLEF constructs not explicitly handled
+unknown_stmt: NAME value* ";"
+
+// === Header statements ===
+version_stmt: "VERSION"i NUMBER ";"
+manufacturing_grid: "MANUFACTURINGGRID"i NUMBER ";"
+busbitchars_stmt: "BUSBITCHARS"i QUOTED_STRING ";"
+dividerchar_stmt: "DIVIDERCHAR"i QUOTED_STRING ";"
+
+// === UNITS block ===
+units_block: "UNITS"i unit_stmt* "END"i "UNITS"i
+unit_stmt: "DATABASE"i "MICRONS"i NUMBER ";"
+         | "TIME"i "NANOSECONDS"i NUMBER ";"
+         | "CAPACITANCE"i "PICOFARADS"i NUMBER ";"
+         | "RESISTANCE"i "OHMS"i NUMBER ";"
+         | "POWER"i "MILLIWATTS"i NUMBER ";"
+         | "CURRENT"i "MILLIAMPS"i NUMBER ";"
+         | "VOLTAGE"i "VOLTS"i NUMBER ";"
+         | "FREQUENCY"i "MEGAHERTZ"i NUMBER ";"
+
+// === LAYER block ===
+layer_block: "LAYER"i NAME layer_body "END"i NAME
+layer_body: layer_stmt*
+layer_stmt: "TYPE"i NAME ";"
+          | "DIRECTION"i NAME ";"
+          | "PITCH"i NUMBER NUMBER? ";"
+          | "WIDTH"i NUMBER ";"
+          | "MINWIDTH"i NUMBER ";"
+          | "MAXWIDTH"i NUMBER ";"
+          | "SPACING"i NUMBER spacing_option* ";"
+          | "RESISTANCE"i resistance_option NUMBER ";"
+          | "CAPACITANCE"i capacitance_option NUMBER ";"
+          | "EDGECAPACITANCE"i NUMBER ";"
+          | "THICKNESS"i NUMBER ";"
+          | "HEIGHT"i NUMBER ";"
+          | "OFFSET"i NUMBER NUMBER? ";"
+          | "AREA"i NUMBER ";"
+          | property_stmt
+          | unknown_layer_stmt
+
+spacing_option: "RANGE"i NUMBER NUMBER | "LENGTHTHRESHOLD"i NUMBER | "PARALLELOVERLAP"i
+resistance_option: "RPERSQ"i
+capacitance_option: "CPERSQDIST"i
+
+unknown_layer_stmt: NAME value* ";"
+
+// === VIA block ===
+via_block: "VIA"i NAME "DEFAULT"i? via_body "END"i NAME
+via_body: via_stmt*
+via_stmt: "LAYER"i NAME ";"
+        | "RECT"i NUMBER NUMBER NUMBER NUMBER ";"
+        | "RESISTANCE"i NUMBER ";"
+        | "VIARULE"i NAME ";"
+        | "CUTSIZE"i NUMBER NUMBER ";"
+        | "CUTSPACING"i NUMBER NUMBER ";"
+        | "ENCLOSURE"i NUMBER NUMBER NUMBER NUMBER ";"
+        | property_stmt
+        | ";"
+
+// === VIARULE block (TechLEF) ===
+viarule_block: "VIARULE"i NAME "GENERATE"i? viarule_body "END"i NAME
+viarule_body: viarule_stmt*
+viarule_stmt: "LAYER"i NAME ";"
+            | "ENCLOSURE"i NUMBER NUMBER ";"
+            | "WIDTH"i NUMBER "TO"i NUMBER ";"
+            | "DIRECTION"i NAME ";"
+            | "OVERHANG"i NUMBER ";"
+            | "METALOVERHANG"i NUMBER ";"
+            | "CUTSPACING"i NUMBER NUMBER? ";"
+            | "CUTSIZE"i NUMBER NUMBER ";"
+            | NAME value* ";"
+
+// === SITE block ===
+site_block: "SITE"i NAME site_body "END"i NAME
+site_body: site_stmt*
+site_stmt: "CLASS"i NAME ";"
+         | "SIZE"i NUMBER "BY"i NUMBER ";"
+         | "SYMMETRY"i symmetry_flag+ ";"
+         | property_stmt
+
+symmetry_flag: SYM_X | SYM_Y | SYM_R90
+SYM_X: "X"i
+SYM_Y: "Y"i
+SYM_R90: "R90"i
+
+// === MACRO block ===
+macro_block: "MACRO"i NAME macro_body "END"i NAME
+macro_body: macro_stmt*
+macro_stmt: "CLASS"i NAME macro_subclass? ";"
+          | "ORIGIN"i NUMBER NUMBER ";"
+          | "SIZE"i NUMBER "BY"i NUMBER ";"
+          | "SYMMETRY"i symmetry_flag+ ";"
+          | "SITE"i NAME ";"
+          | "FOREIGN"i NAME NUMBER? NUMBER? ";"
+          | "SOURCE"i NAME ";"
+          | "EEQ"i NAME ";"
+          | pin_block
+          | obs_block
+          | property_stmt
+
+macro_subclass: NAME
+
+// === PIN block within MACRO ===
+pin_block: "PIN"i NAME pin_body "END"i NAME
+pin_body: pin_stmt*
+pin_stmt: "DIRECTION"i NAME ";"
+        | "USE"i NAME ";"
+        | "SHAPE"i NAME ";"
+        | "ANTENNAPARTIALMETALAREA"i NUMBER "LAYER"i NAME ";"
+        | "ANTENNAGATEAREA"i NUMBER "LAYER"i NAME ";"
+        | port_block
+        | property_stmt
+
+port_block: "PORT"i port_body "END"i
+port_body: port_stmt*
+port_stmt: "LAYER"i NAME ";"
+         | "RECT"i NUMBER NUMBER NUMBER NUMBER ";"
+         | "POLYGON"i NUMBER+ ";"
+         | "VIA"i NUMBER NUMBER NAME ";"
+         | "CLASS"i NAME ";"
+         | "WIDTH"i NUMBER ";"
+
+// === OBS block within MACRO ===
+obs_block: "OBS"i obs_body "END"i
+obs_body: obs_stmt*
+obs_stmt: "LAYER"i NAME ";"
+        | "RECT"i NUMBER NUMBER NUMBER NUMBER ";"
+        | "POLYGON"i NUMBER+ ";"
+
+// === PROPERTY statement ===
+property_stmt: "PROPERTY"i NAME value ";"
+
+// === Values ===
+value: QUOTED_STRING
+     | NUMBER
+     | NAME
+
+// === Terminals ===
+NAME: /[a-zA-Z_][a-zA-Z0-9_\.\[\]]*/
+NUMBER: /[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/
+QUOTED_STRING: /"[^"]*"/
+
+// === Comments and whitespace ===
+COMMENT: /#[^\n]*/
+BLOCK_COMMENT: /\/\*[\s\S]*?\*\//
+%ignore COMMENT
+%ignore BLOCK_COMMENT
+%import common.WS
+%ignore WS
