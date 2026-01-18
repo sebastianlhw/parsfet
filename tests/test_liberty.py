@@ -150,7 +150,7 @@ def test_fo4_calculation(sample_liberty_content):
     # INV_X1 input cap is 0.002
     # FO4 load = 4 * 0.002 = 0.008
 
-    slew, load = lib.fo4_operating_point
+    slew, load = lib.fo4_operating_point()
 
     assert pytest.approx(load) == 0.008
     # Slew should be calculated based on this load.
@@ -193,6 +193,6 @@ def test_missing_baseline_cell(sample_liberty_content):
     assert lib_buf.baseline_cell is None
 
     # Should still calculate a fallback operating point
-    slew, load = lib_buf.fo4_operating_point
+    slew, load = lib_buf.fo4_operating_point()
     assert slew > 0
     assert load > 0

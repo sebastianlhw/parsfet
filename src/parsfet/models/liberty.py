@@ -576,21 +576,33 @@ class LibertyLibrary(BaseModel):
         pattern_upper = pattern.upper()
         return [cell for name, cell in self.cells.items() if pattern_upper in name.upper()]
 
-    @property
-    def fo4_operating_point(self) -> tuple[float, float]:
+    def fo4_operating_point(
+        self,
+        tolerance: Optional[float] = None,
+        max_iterations: int = 10,
+        initial_slew_guess: Optional[float] = None,
+        dampening_factor: float = 0.714,
+        trace: bool = False,
+    ) -> tuple[float, float]:
         """Computes the FO4 (fanout-of-4) operating point for this library.
 
-        The FO4 delay is a process-independent metric. This method determines the
-        slew and load conditions corresponding to an inverter driving 4 identical inverters.
+        Uses iterative fixed-point convergence to find the "natural" slew where
+        input slew equals output slew (the eigenmode of an inverter chain).
+
+        Args:
+            tolerance: Convergence tolerance. If None, uses 1% of min characterized slew.
+            max_iterations: Maximum iterations before returning (default 10).
+            initial_slew_guess: Starting slew. If None, uses median from LUT.
+            dampening_factor: Relaxation factor (0-1). Default 0.714 for stability.
+            trace: If True, prints convergence trace for debugging.
 
         Returns:
             A tuple (typical_slew, typical_load) where:
             - typical_load = 4 * baseline inverter input capacitance
-            - typical_slew = baseline inverter output transition at FO4 load
+            - typical_slew = consistent slew (input = output) at FO4 load
         """
         baseline = self.baseline_cell
         if not baseline:
-            # Fallback to center of first timing arc's LUT indices
             return self._fallback_operating_point()
 
         # FO4 load = 4× inverter input capacitance
@@ -599,20 +611,73 @@ class LibertyLibrary(BaseModel):
             inv_cap = 0.001  # Default 1fF
         fo4_load = 4.0 * inv_cap
 
-        # Get baseline's output transition at FO4 load
-        # Use median slew from the LUT as initial estimate
-        initial_slew = self._get_median_slew(baseline)
+        # Determine start point (Smart Start)
+        if initial_slew_guess is not None:
+            start_slew = initial_slew_guess
+        else:
+            start_slew = self._get_median_slew(baseline)
 
-        # Get output slew at (initial_slew, fo4_load)
-        # This makes the operating point self-consistent
-        typical_slew = baseline.output_transition_at(initial_slew, fo4_load)
-        if typical_slew <= 0:
-            typical_slew = initial_slew
+        # Determine dynamic tolerance if not specified
+        if tolerance is None:
+            min_slew = self._get_min_slew(baseline)
+            tolerance = max(min_slew * 0.01, 1e-4)  # 1% of min slew or 0.1ps
+
+        typical_slew = self._find_consistent_slew(
+            baseline, fo4_load, start_slew, tolerance, max_iterations, dampening_factor, trace
+        )
 
         return (typical_slew, fo4_load)
 
+    def _find_consistent_slew(
+        self,
+        cell: Cell,
+        load: float,
+        start_slew: float,
+        tolerance: float,
+        max_iter: int = 10,
+        alpha: float = 0.714,
+        trace: bool = False,
+    ) -> float:
+        """Finds the consistent slew using damped fixed-point iteration.
+
+        Iterates until input_slew ≈ output_slew (within tolerance).
+
+        Args:
+            cell: The baseline cell to use for transition lookup.
+            load: The FO4 load capacitance.
+            start_slew: Initial slew guess.
+            tolerance: Convergence tolerance.
+            max_iter: Maximum iterations.
+            alpha: Dampening factor (0-1). Higher = faster but less stable.
+            trace: If True, prints each iteration for debugging.
+
+        Returns:
+            The converged slew value.
+        """
+        slew = start_slew
+        for i in range(max_iter):
+            target_slew = cell.output_transition_at(slew, load)
+
+            # Apply Dampening (Successive Over-Relaxation)
+            next_slew = (1 - alpha) * slew + alpha * target_slew
+
+            delta = abs(next_slew - slew)
+            if trace:
+                print(f"  iter {i}: slew={slew:.6f} -> target={target_slew:.6f} -> next={next_slew:.6f} (delta={delta:.6f})")
+
+            if delta < tolerance:
+                if trace:
+                    print(f"  Converged at iteration {i} with delta={delta:.6f} < tol={tolerance:.6f}")
+                return next_slew
+
+            slew = next_slew
+
+        if trace:
+            print(f"  Did not converge after {max_iter} iterations, returning {slew:.6f}")
+        return slew
+
     def _get_median_slew(self, cell: Cell) -> float:
-        """Get median slew value from cell's timing arc LUTs"""
+        """Get median slew value from cell's timing arc LUTs."""
         slews = []
         for arc in cell.timing_arcs:
             if arc.cell_rise and arc.cell_rise.index_1:
@@ -624,6 +689,19 @@ class LibertyLibrary(BaseModel):
             slews = sorted(set(slews))
             return slews[len(slews) // 2]
         return 0.01  # Default 10ps
+
+    def _get_min_slew(self, cell: Cell) -> float:
+        """Get minimum slew value from cell's timing arc LUTs for tolerance calculation."""
+        slews = []
+        for arc in cell.timing_arcs:
+            if arc.cell_rise and arc.cell_rise.index_1:
+                slews.extend(arc.cell_rise.index_1)
+            if arc.cell_fall and arc.cell_fall.index_1:
+                slews.extend(arc.cell_fall.index_1)
+
+        if slews:
+            return min(slews)
+        return 0.001  # Default 1ps
 
     def _fallback_operating_point(self) -> tuple[float, float]:
         """Fallback operating point when no baseline cell exists"""

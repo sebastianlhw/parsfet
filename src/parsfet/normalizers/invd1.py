@@ -218,7 +218,7 @@ class INVD1Normalizer:
             )
 
         # Get FO4 operating point (already in library units)
-        self.fo4_slew, self.fo4_load = library.fo4_operating_point
+        self.fo4_slew, self.fo4_load = library.fo4_operating_point()
 
         # Get unit normalizer for converting to canonical units
         self.unit_normalizer = library.unit_normalizer
