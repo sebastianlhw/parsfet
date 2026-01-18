@@ -8,6 +8,7 @@ Reference: LEF/DEF Language Reference (Cadence)
 """
 
 import re
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,8 @@ from ..models.lef import (
     Via,
 )
 from .base import BaseParser
+
+logger = logging.getLogger(__name__)
 
 
 class LEFParser(BaseParser[LEFLibrary]):
@@ -54,6 +57,7 @@ class LEFParser(BaseParser[LEFLibrary]):
         Returns:
             A populated LEFLibrary object.
         """
+        logger.info(f"Parsing LEF file: {path}")
         content = self._read_file(path, encoding="utf-8", errors="replace")
         name = path.name.split(".")[0]
         return self.parse_string(content, name)
@@ -68,13 +72,14 @@ class LEFParser(BaseParser[LEFLibrary]):
         Returns:
             A populated LEFLibrary object.
         """
+        logger.debug(f"Parsing LEF content string, length: {len(content)}")
         # Preprocess: remove comments
         content = self._remove_comments(content)
 
         # Tokenize and initialize token stream
         self._init_tokens(self._tokenize(content))
 
-        library = LEFLibrary()
+        library = LEFLibrary(name=name)
 
         # Parse top-level statements
         while self._pos < self._length:
@@ -142,7 +147,9 @@ class LEFParser(BaseParser[LEFLibrary]):
 
     def _tokenize(self, content: str) -> list[str]:
         """Converts the content string into a stream of tokens."""
-        return self._TOKEN_PATTERN.findall(content)
+        tokens = self._TOKEN_PATTERN.findall(content)
+        logger.debug(f"Generated {len(tokens)} tokens")
+        return tokens
 
     def _expect(self, expected: str, case_sensitive: bool = False) -> str:
         """LEF uses case-insensitive keywords by default."""
@@ -680,6 +687,9 @@ class LEFParser(BaseParser[LEFLibrary]):
             if macro.size[0] <= 0 or macro.size[1] <= 0:
                 warnings.append(f"Macro {name} has invalid size: {macro.size}")
 
+        if warnings:
+            logger.warning(f"Validation warnings for {data.name}: {warnings}")
+
         return warnings
 
 
@@ -710,6 +720,7 @@ class TechLEFParser(BaseParser[TechLEF]):
         lef = self._lef_parser.parse_string(content, name)
 
         return TechLEF(
+            name=name,
             version=lef.version,
             units_database=lef.units_database,
             manufacturing_grid=lef.manufacturing_grid,

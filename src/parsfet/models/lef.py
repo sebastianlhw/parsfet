@@ -271,6 +271,7 @@ class LEFLibrary(BaseModel):
         attributes: Additional unparsed attributes.
     """
 
+    name: str = "unknown"
     version: Optional[str] = None
     bus_bit_chars: str = "[]"
     divider_char: str = "/"
@@ -320,6 +321,7 @@ class TechLEF(BaseModel):
         attributes: Additional unparsed attributes.
     """
 
+    name: str = "unknown"
     version: Optional[str] = None
 
     # Units

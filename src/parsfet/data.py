@@ -367,7 +367,7 @@ class Dataset:
                     # Identity
                     "library": lib.name,
                     "cell": cell_name,
-                    "cell_type": m.cell_type,
+                    "cell_type": m.cell_type.name.lower(),  # Convert enum to lowercase string
                     # Ratios
                     "area_ratio": m.area_ratio,
                     "d0_ratio": m.d0_ratio,
@@ -465,6 +465,200 @@ class Dataset:
         y = df["cell_type"].cat.codes.to_numpy()
 
         return X, y, label_map
+
+    def to_vector(self, entry_index: int = 0) -> list[float]:
+        """Extract library-level fingerprint feature vector for ML.
+
+        This returns a compact 15-element vector representing the technology
+        library's characteristics. Unlike to_numpy() which returns per-cell
+        features, this returns aggregate library statistics.
+
+        Args:
+            entry_index: Index of the library entry to vectorize (default 0).
+
+        Returns:
+            A 15-element feature vector:
+            - [0-3]: Mean ratios (area, d0, k, leakage)
+            - [4-7]: Std ratios (area, d0, k, leakage)
+            - [8]: Total cells / 1000 (normalized)
+            - [9-10]: Combinational ratio, sequential ratio
+            - [11-13]: Inverter ratio, NAND ratio, DFF ratio
+            - [14]: Drive diversity (max_area / min_area)
+
+        Example:
+            >>> ds = Dataset().load_files(["lib.lib"])
+            >>> vector = ds.to_vector()
+            >>> print(len(vector))  # 15
+        """
+        if not self.entries:
+            return [0.0] * 15
+
+        if entry_index >= len(self.entries):
+            raise IndexError(f"Entry index {entry_index} out of range")
+
+        entry = self.entries[entry_index]
+
+        if not entry.normalizer:
+            # No normalization available
+            return [0.0] * 15
+
+        summary = entry.normalizer.get_summary()
+
+        # Extract statistics
+        def get_stat(category: str, stat: str) -> float:
+            return summary.get(category, {}).get(stat, 0.0)
+
+        mean_area = get_stat("area_ratio_stats", "mean")
+        mean_d0 = get_stat("d0_ratio_stats", "mean")
+        mean_k = get_stat("k_ratio_stats", "mean")
+        mean_leakage = get_stat("leakage_ratio_stats", "mean")
+
+        std_area = get_stat("area_ratio_stats", "std")
+        std_d0 = get_stat("d0_ratio_stats", "std")
+        std_k = get_stat("k_ratio_stats", "std")
+        std_leakage = get_stat("leakage_ratio_stats", "std")
+
+        total_cells = summary.get("total_cells", 0)
+
+        # Cell type distribution
+        type_counts = summary.get("cell_type_counts", {})
+        combinational = total_cells - type_counts.get("sequential", 0)
+        sequential = type_counts.get("sequential", 0)
+
+        # Functional type ratios (name-based heuristic)
+        inverter_count = 0
+        nand_count = 0
+        dff_count = 0
+
+        for cell_name in entry.library.cells.keys():
+            name_upper = cell_name.upper()
+            if "INV" in name_upper and "NAND" not in name_upper:
+                inverter_count += 1
+            if "NAND" in name_upper:
+                nand_count += 1
+            if "DFF" in name_upper or "SDFF" in name_upper:
+                dff_count += 1
+
+        # Drive diversity
+        min_area = get_stat("area_ratio_stats", "min")
+        max_area = get_stat("area_ratio_stats", "max")
+        drive_diversity = max_area / max(1.0, min_area) if min_area > 0 else 0.0
+
+        return [
+            mean_area,
+            mean_d0,
+            mean_k,
+            mean_leakage,
+            std_area,
+            std_d0,
+            std_k,
+            std_leakage,
+            float(total_cells) / 1000.0,  # Normalized cell count
+            float(combinational) / max(1, total_cells),
+            float(sequential) / max(1, total_cells),
+            float(inverter_count) / max(1, total_cells),
+            float(nand_count) / max(1, total_cells),
+            float(dff_count) / max(1, total_cells),
+            drive_diversity,
+        ]
+
+    def to_summary_dict(self, entry_index: int = 0) -> dict:
+        """Generate a fingerprint-like summary dictionary.
+
+        Returns a dictionary similar to TechnologyFingerprint.to_dict()
+        for JSON export and human-readable summaries.
+
+        Args:
+            entry_index: Index of the library entry to summarize (default 0).
+
+        Returns:
+            A dictionary with baseline, statistics, and cell counts.
+        """
+        if not self.entries:
+            return {"error": "No entries loaded"}
+
+        if entry_index >= len(self.entries):
+            return {"error": f"Entry index {entry_index} out of range"}
+
+        entry = self.entries[entry_index]
+        lib = entry.library
+
+        if not entry.normalizer:
+            return {
+                "library": lib.name,
+                "error": "No baseline inverter found",
+            }
+
+        summary = entry.normalizer.get_summary()
+
+        # Extract cell counts
+        total_cells = summary["total_cells"]
+        type_counts = summary.get("cell_type_counts", {})
+        sequential = type_counts.get("sequential", 0)
+        combinational = total_cells - sequential
+
+        # Functional type counts (name-based)
+        inverter_count = sum(1 for n in lib.cells if "INV" in n.upper() and "NAND" not in n.upper())
+        buffer_count = sum(1 for n in lib.cells if "BUF" in n.upper())
+        nand_count = sum(1 for n in lib.cells if "NAND" in n.upper())
+        nor_count = sum(1 for n in lib.cells if "NOR" in n.upper())
+        aoi_count = sum(1 for n in lib.cells if "AOI" in n.upper())
+        oai_count = sum(1 for n in lib.cells if "OAI" in n.upper())
+        mux_count = sum(1 for n in lib.cells if "MUX" in n.upper())
+        dff_count = sum(1 for n in lib.cells if "DFF" in n.upper() or "SDFF" in n.upper())
+        latch_count = sum(1 for n in lib.cells if "LAT" in n.upper())
+
+        return {
+            "library": lib.name,
+            "baseline": {
+                "cell": summary["baseline_cell"],
+                "area_um2": summary["baseline_raw"]["area"],
+                "d0_ns": summary["baseline_raw"]["d0_ns"],
+                "k_ns_per_pf": summary["baseline_raw"]["k_ns_per_pf"],
+                "leakage": summary["baseline_raw"]["leakage"],
+            },
+            "normalized_stats": {
+                "area": {
+                    "mean": summary["area_ratio_stats"].get("mean", 0.0),
+                    "std": summary["area_ratio_stats"].get("std", 0.0),
+                    "min": summary["area_ratio_stats"].get("min", 0.0),
+                    "max": summary["area_ratio_stats"].get("max", 0.0),
+                },
+                "d0": {
+                    "mean": summary["d0_ratio_stats"].get("mean", 0.0),
+                    "std": summary["d0_ratio_stats"].get("std", 0.0),
+                },
+                "k": {
+                    "mean": summary["k_ratio_stats"].get("mean", 0.0),
+                    "std": summary["k_ratio_stats"].get("std", 0.0),
+                },
+                "leakage": {
+                    "mean": summary["leakage_ratio_stats"].get("mean", 0.0),
+                    "std": summary["leakage_ratio_stats"].get("std", 0.0),
+                },
+            },
+            "cell_counts": {
+                "total": total_cells,
+                "combinational": combinational,
+                "sequential": sequential,
+            },
+            "function_types": {
+                "inverter": inverter_count,
+                "buffer": buffer_count,
+                "nand": nand_count,
+                "nor": nor_count,
+                "aoi": aoi_count,
+                "oai": oai_count,
+                "mux": mux_count,
+                "dff": dff_count,
+                "latch": latch_count,
+            },
+            "metadata": {
+                "process_node": lib.process_node,
+                "foundry": lib.foundry,
+                "vt_flavor": lib.vt_flavor.value if lib.vt_flavor else None,
+            },
+        }
 
     def export_to_json(self, entry_index: int = 0) -> dict:
         """Export combined Liberty + LEF/TechLEF data to a JSON-serializable dict.

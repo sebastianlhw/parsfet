@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from enum import Enum, auto
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,29 @@ if TYPE_CHECKING:
 # --- Configuration ---
 
 MAX_INPUTS = 6  # Beyond this, fall back to 'unknown' (2^6 = 64 evaluations)
+
+
+# --- Cell Type Enum ---
+
+
+class CellType(Enum):
+    """Standard cell type classification.
+    
+    Enum values represent the semantic category of a standard cell
+    based on its boolean function or sequential behavior.
+    """
+    INVERTER = auto()
+    BUFFER = auto()
+    AND = auto()
+    OR = auto()
+    NAND = auto()
+    NOR = auto()
+    XOR = auto()
+    XNOR = auto()
+    FLIP_FLOP = auto()
+    LATCH = auto()
+    CONSTANT = auto()
+    UNKNOWN = auto()
 
 
 # --- AST Node Classes ---
@@ -271,65 +295,65 @@ def _compute_signature(ast: ASTNode) -> tuple[int, ...]:
 # --- Signature Lookup Tables ---
 
 # 1-input signatures (2 entries)
-SIGNATURES_1: dict[tuple[int, ...], str] = {
-    (1, 0): "inverter",  # !A
-    (0, 1): "buffer",  # A
+SIGNATURES_1: dict[tuple[int, ...], CellType] = {
+    (1, 0): CellType.INVERTER,  # !A
+    (0, 1): CellType.BUFFER,  # A
 }
 
 # 2-input signatures (4 entries: A=bit0, B=bit1)
-SIGNATURES_2: dict[tuple[int, ...], str] = {
-    (0, 0, 0, 1): "and",  # A & B
-    (0, 1, 1, 1): "or",  # A | B
-    (1, 1, 1, 0): "nand",  # !(A & B)
-    (1, 0, 0, 0): "nor",  # !(A | B)
-    (0, 1, 1, 0): "xor",  # A ^ B
-    (1, 0, 0, 1): "xnor",  # !(A ^ B)
+SIGNATURES_2: dict[tuple[int, ...], CellType] = {
+    (0, 0, 0, 1): CellType.AND,  # A & B
+    (0, 1, 1, 1): CellType.OR,  # A | B
+    (1, 1, 1, 0): CellType.NAND,  # !(A & B)
+    (1, 0, 0, 0): CellType.NOR,  # !(A | B)
+    (0, 1, 1, 0): CellType.XOR,  # A ^ B
+    (1, 0, 0, 1): CellType.XNOR,  # !(A ^ B)
 }
 
 # 3-input signatures (8 entries)
-SIGNATURES_3: dict[tuple[int, ...], str] = {
-    (0, 0, 0, 0, 0, 0, 0, 1): "and",  # A & B & C
-    (0, 1, 1, 1, 1, 1, 1, 1): "or",  # A | B | C
-    (1, 1, 1, 1, 1, 1, 1, 0): "nand",  # !(A & B & C)
-    (1, 0, 0, 0, 0, 0, 0, 0): "nor",  # !(A | B | C)
+SIGNATURES_3: dict[tuple[int, ...], CellType] = {
+    (0, 0, 0, 0, 0, 0, 0, 1): CellType.AND,  # A & B & C
+    (0, 1, 1, 1, 1, 1, 1, 1): CellType.OR,  # A | B | C
+    (1, 1, 1, 1, 1, 1, 1, 0): CellType.NAND,  # !(A & B & C)
+    (1, 0, 0, 0, 0, 0, 0, 0): CellType.NOR,  # !(A | B | C)
 }
 
 # 4-input signatures (16 entries)
-SIGNATURES_4: dict[tuple[int, ...], str] = {
-    tuple([0] * 15 + [1]): "and",  # A & B & C & D
-    tuple([0] + [1] * 15): "or",  # A | B | C | D
-    tuple([1] * 15 + [0]): "nand",  # !(A & B & C & D)
-    tuple([1] + [0] * 15): "nor",  # !(A | B | C | D)
+SIGNATURES_4: dict[tuple[int, ...], CellType] = {
+    tuple([0] * 15 + [1]): CellType.AND,  # A & B & C & D
+    tuple([0] + [1] * 15): CellType.OR,  # A | B | C | D
+    tuple([1] * 15 + [0]): CellType.NAND,  # !(A & B & C & D)
+    tuple([1] + [0] * 15): CellType.NOR,  # !(A | B | C | D)
 }
 
 
-def _lookup_signature(sig: tuple[int, ...]) -> str:
+def _lookup_signature(sig: tuple[int, ...]) -> CellType:
     """Look up gate type from signature."""
     n = len(sig)
 
     # Constant outputs
     if all(v == 0 for v in sig):
-        return "constant"
+        return CellType.CONSTANT
     if all(v == 1 for v in sig):
-        return "constant"
+        return CellType.CONSTANT
 
     if n == 2:
-        return SIGNATURES_1.get(sig, "unknown")
+        return SIGNATURES_1.get(sig, CellType.UNKNOWN)
     elif n == 4:
-        return SIGNATURES_2.get(sig, "unknown")
+        return SIGNATURES_2.get(sig, CellType.UNKNOWN)
     elif n == 8:
-        return SIGNATURES_3.get(sig, "unknown")
+        return SIGNATURES_3.get(sig, CellType.UNKNOWN)
     elif n == 16:
-        return SIGNATURES_4.get(sig, "unknown")
+        return SIGNATURES_4.get(sig, CellType.UNKNOWN)
     else:
-        return "unknown"
+        return CellType.UNKNOWN
 
 
 # --- Main Classification Functions ---
 
 
 @lru_cache(maxsize=2048)
-def classify_function(func: str) -> str:
+def classify_function(func: str) -> CellType:
     """Classify a boolean function string by semantic analysis.
 
     Parses the function into an AST, evaluates its truth table,
@@ -339,44 +363,44 @@ def classify_function(func: str) -> str:
         func: Boolean function string (e.g., "!(A & B)", "A | B", "!A")
 
     Returns:
-        Gate type: 'inverter', 'buffer', 'and', 'or', 'nand', 'nor',
-                   'xor', 'xnor', 'constant', or 'unknown'
+        CellType enum: INVERTER, BUFFER, AND, OR, NAND, NOR,
+                       XOR, XNOR, CONSTANT, or UNKNOWN
     """
     if not func or not func.strip():
-        return "unknown"
+        return CellType.UNKNOWN
 
     try:
         tokens = _tokenize(func)
         if not tokens:
-            return "unknown"
+            return CellType.UNKNOWN
 
         ast = _parse(tokens)
         signature = _compute_signature(ast)
         return _lookup_signature(signature)
 
     except (ParseError, ValueError, IndexError):
-        return "unknown"
+        return CellType.UNKNOWN
 
 
-def classify_cell(cell: "Cell") -> str:
+def classify_cell(cell: "Cell") -> CellType:
     """Classifies a cell type based on its pin directions and logical functions.
 
     Identifies standard gates (INV, NAND, NOR, etc.) and sequential elements
-    (DFF, Latch). Cells with complex or unrecognizable logic are labeled 'unknown'.
+    (DFF, Latch). Cells with complex or unrecognizable logic are labeled UNKNOWN.
 
     Args:
         cell: The Liberty Cell object to classify.
 
     Returns:
-        A string representing the cell type: 'inverter', 'buffer', 'nand', 'nor',
-        'and', 'or', 'xor', 'xnor', 'flip_flop', 'latch', 'constant', or 'unknown'.
+        CellType enum: INVERTER, BUFFER, NAND, NOR, AND, OR, XOR, XNOR,
+                       FLIP_FLOP, LATCH, CONSTANT, or UNKNOWN
     """
     # Check for sequential elements first (ff/latch groups)
     if cell.is_sequential:
         # Check timing types for latch vs flip-flop
         if any("latch" in str(arc.timing_type or "").lower() for arc in cell.timing_arcs):
-            return "latch"
-        return "flip_flop"
+            return CellType.LATCH
+        return CellType.FLIP_FLOP
 
     # Get output pins to analyze combinational functions
     output_pins = [p for p in cell.pins.values() if p.direction == "output"]
@@ -387,7 +411,7 @@ def classify_cell(cell: "Cell") -> str:
             continue
 
         result = classify_function(pin.function.strip())
-        if result != "unknown":
+        if result != CellType.UNKNOWN:
             return result
 
-    return "unknown"
+    return CellType.UNKNOWN

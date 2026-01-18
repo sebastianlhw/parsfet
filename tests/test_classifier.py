@@ -3,6 +3,7 @@
 import pytest
 
 from parsfet.normalizers.classifier import (
+    CellType,
     _compute_signature,
     _parse,
     _tokenize,
@@ -52,96 +53,96 @@ class TestClassifyFunction:
 
     # Basic gates
     def test_inverter(self):
-        assert classify_function("!A") == "inverter"
-        assert classify_function("~A") == "inverter"
-        assert classify_function("A'") == "inverter"
-        assert classify_function("(!A)") == "inverter"
-        assert classify_function("!(A)") == "inverter"
+        assert classify_function("!A") == CellType.INVERTER
+        assert classify_function("~A") == CellType.INVERTER
+        assert classify_function("A'") == CellType.INVERTER
+        assert classify_function("(!A)") == CellType.INVERTER
+        assert classify_function("!(A)") == CellType.INVERTER
 
     def test_buffer(self):
-        assert classify_function("A") == "buffer"
-        assert classify_function("(A)") == "buffer"
+        assert classify_function("A") == CellType.BUFFER
+        assert classify_function("(A)") == CellType.BUFFER
 
     def test_and(self):
-        assert classify_function("A&B") == "and"
-        assert classify_function("A*B") == "and"
-        assert classify_function("(A&B)") == "and"
+        assert classify_function("A&B") == CellType.AND
+        assert classify_function("A*B") == CellType.AND
+        assert classify_function("(A&B)") == CellType.AND
 
     def test_or(self):
-        assert classify_function("A|B") == "or"
-        assert classify_function("A+B") == "or"
+        assert classify_function("A|B") == CellType.OR
+        assert classify_function("A+B") == CellType.OR
 
     def test_nand(self):
-        assert classify_function("!(A&B)") == "nand"
-        assert classify_function("!(A*B)") == "nand"
+        assert classify_function("!(A&B)") == CellType.NAND
+        assert classify_function("!(A*B)") == CellType.NAND
 
     def test_nor(self):
-        assert classify_function("!(A|B)") == "nor"
-        assert classify_function("!(A+B)") == "nor"
+        assert classify_function("!(A|B)") == CellType.NOR
+        assert classify_function("!(A+B)") == CellType.NOR
 
     def test_xor(self):
-        assert classify_function("A^B") == "xor"
+        assert classify_function("A^B") == CellType.XOR
 
     def test_xnor(self):
-        assert classify_function("!(A^B)") == "xnor"
+        assert classify_function("!(A^B)") == CellType.XNOR
 
     # De Morgan equivalents - KEY SEMANTIC TEST
     def test_de_morgan_nand(self):
         """De Morgan: !(A&B) == !A | !B"""
-        assert classify_function("!(A&B)") == "nand"
-        assert classify_function("!A|!B") == "nand"
+        assert classify_function("!(A&B)") == CellType.NAND
+        assert classify_function("!A|!B") == CellType.NAND
 
     def test_de_morgan_nor(self):
         """De Morgan: !(A|B) == !A & !B"""
-        assert classify_function("!(A|B)") == "nor"
-        assert classify_function("!A&!B") == "nor"
+        assert classify_function("!(A|B)") == CellType.NOR
+        assert classify_function("!A&!B") == CellType.NOR
 
     # Multi-input gates
     def test_3_input_and(self):
-        assert classify_function("A&B&C") == "and"
+        assert classify_function("A&B&C") == CellType.AND
 
     def test_3_input_or(self):
-        assert classify_function("A|B|C") == "or"
+        assert classify_function("A|B|C") == CellType.OR
 
     def test_3_input_nand(self):
-        assert classify_function("!(A&B&C)") == "nand"
+        assert classify_function("!(A&B&C)") == CellType.NAND
 
     def test_3_input_nor(self):
-        assert classify_function("!(A|B|C)") == "nor"
+        assert classify_function("!(A|B|C)") == CellType.NOR
 
     def test_4_input_gates(self):
-        assert classify_function("A&B&C&D") == "and"
-        assert classify_function("A|B|C|D") == "or"
-        assert classify_function("!(A&B&C&D)") == "nand"
-        assert classify_function("!(A|B|C|D)") == "nor"
+        assert classify_function("A&B&C&D") == CellType.AND
+        assert classify_function("A|B|C|D") == CellType.OR
+        assert classify_function("!(A&B&C&D)") == CellType.NAND
+        assert classify_function("!(A|B|C|D)") == CellType.NOR
 
     # Constants
     def test_tautology(self):
         """A | !A is always 1."""
-        assert classify_function("A|!A") == "constant"
+        assert classify_function("A|!A") == CellType.CONSTANT
 
     def test_contradiction(self):
         """A & !A is always 0."""
-        assert classify_function("A&!A") == "constant"
+        assert classify_function("A&!A") == CellType.CONSTANT
 
     # Complex / Unknown
     def test_aoi_unknown(self):
         """AOI gate should be unknown (not in lookup)."""
-        assert classify_function("!(A|(B&C))") == "unknown"
+        assert classify_function("!(A|(B&C))") == CellType.UNKNOWN
 
     def test_oai_unknown(self):
         """OAI gate should be unknown (not in lookup)."""
-        assert classify_function("!((A|B)&C)") == "unknown"
+        assert classify_function("!((A|B)&C)") == CellType.UNKNOWN
 
     # Error handling
     def test_empty_string(self):
-        assert classify_function("") == "unknown"
+        assert classify_function("") == CellType.UNKNOWN
 
     def test_whitespace_only(self):
-        assert classify_function("   ") == "unknown"
+        assert classify_function("   ") == CellType.UNKNOWN
 
     def test_none_like(self):
-        assert classify_function("") == "unknown"
+        assert classify_function("") == CellType.UNKNOWN
 
 
 class TestVariableOrdering:
@@ -157,8 +158,8 @@ class TestVariableOrdering:
 
     def test_different_var_names(self):
         """X&Y and A&B should both be 'and'."""
-        assert classify_function("X&Y") == "and"
-        assert classify_function("A&B") == "and"
+        assert classify_function("X&Y") == CellType.AND
+        assert classify_function("A&B") == CellType.AND
 
 
 class TestXorPrecedence:
@@ -172,11 +173,11 @@ class TestXorPrecedence:
         # This is XOR of (A&B) with C
         result = classify_function("A&B^C")
         # This should be 'unknown' as it's a 3-input XOR variant
-        assert result in ("unknown", "xor")  # Depends on pattern
+        assert result in (CellType.UNKNOWN, CellType.XOR)  # Depends on pattern
 
     def test_explicit_xor_grouping(self):
         """(A ^ B) should work correctly."""
-        assert classify_function("(A^B)") == "xor"
+        assert classify_function("(A^B)") == CellType.XOR
 
 
 class TestCaching:
@@ -187,7 +188,7 @@ class TestCaching:
         result1 = classify_function("!(A&B)")
         # Second call (should hit cache)
         result2 = classify_function("!(A&B)")
-        assert result1 == result2 == "nand"
+        assert result1 == result2 == CellType.NAND
 
 
 class TestTruthTableSignatures:

@@ -13,6 +13,7 @@ Typical usage example:
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,16 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+from .log_utils import setup_logging
+
+
+@app.callback(invoke_without_command=False)
+def main(
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress debug logs (show warnings/errors only)"),
+):
+    """Pars-FET: VLSI Technology Abstraction Framework."""
+    setup_logging(quiet=quiet)
 
 
 def detect_format(path: Path, forced_format: Optional[str] = None) -> str:
@@ -54,6 +65,8 @@ def detect_format(path: Path, forced_format: Optional[str] = None) -> str:
         return "techlef"
     elif suffix == ".ict":
         return "ict"
+    elif suffix == ".json":
+        return "json"
     else:
         # Try to detect from content
         try:
@@ -76,7 +89,6 @@ def parse(
         None, "--format", "-f", help="Force format: lib, lef, techlef"
     ),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output JSON file"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
 ):
     """Parses a technology file and displays a summary.
 
@@ -99,7 +111,11 @@ def parse(
         console.print(f"[red]Error:[/red] File not found: {file}")
         raise typer.Exit(1)
 
+    logger = logging.getLogger("parsfet.cli")
+    logger.info(f"Starting parse for {file}")
+
     detected_format = detect_format(file, format)
+    logger.debug(f"Detected format: {detected_format}")
 
     if detected_format == "lib":
         from .parsers.liberty import LibertyParser
@@ -120,7 +136,7 @@ def parse(
             )
         )
 
-        if verbose:
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
             # Show cell breakdown
             table = Table(title="Cell Types")
             table.add_column("Type")
@@ -174,7 +190,7 @@ def parse(
             )
         )
 
-        if verbose and lef.layers:
+        if logging.getLogger().isEnabledFor(logging.DEBUG) and lef.layers:
             table = Table(title="Layers")
             table.add_column("Name")
             table.add_column("Type")
@@ -366,7 +382,7 @@ def compare(
             raise typer.Exit(1)
 
     from .comparators.cell_diff import compare_cell_coverage
-    from .comparators.fingerprint import compare_fingerprints, create_fingerprint
+    from .data import Dataset
     from .parsers.liberty import LibertyParser
 
     parser = LibertyParser()
@@ -391,18 +407,33 @@ def compare(
 
     console.print(table)
 
-    # Fingerprint comparison
+    # Fingerprint comparison using Dataset API
     try:
-        fp_a = create_fingerprint(a)
-        fp_b = create_fingerprint(b)
-        fp_comparison = compare_fingerprints(fp_a, fp_b)
+        ds_a = Dataset().load_files([lib_a])
+        ds_b = Dataset().load_files([lib_b])
+        
+        vec_a = ds_a.to_vector()
+        vec_b = ds_b.to_vector()
+        
+        # Compute cosine similarity
+        dot = sum(a * b for a, b in zip(vec_a, vec_b))
+        mag_a = sum(a * a for a in vec_a) ** 0.5
+        mag_b = sum(b * b for b in vec_b) ** 0.5
+        cosine_sim = dot / (mag_a * mag_b) if (mag_a > 0 and mag_b > 0) else 0.0
 
         console.print(
-            f"\n[bold]Fingerprint Similarity:[/] {fp_comparison['similarity']['cosine']:.3f}"
+            f"\n[bold]Fingerprint Similarity:[/] {cosine_sim:.3f}"
         )
 
-        if fp_a.baseline_delay > 0 and fp_b.baseline_delay > 0:
-            speed_ratio = fp_a.baseline_delay / fp_b.baseline_delay
+        # Compare baseline speeds
+        summary_a = ds_a.to_summary_dict()
+        summary_b = ds_b.to_summary_dict()
+        
+        d0_a = summary_a.get("baseline", {}).get("d0_ns", 0)
+        d0_b = summary_b.get("baseline", {}).get("d0_ns", 0)
+        
+        if d0_a > 0 and d0_b > 0:
+            speed_ratio = d0_a / d0_b
             if speed_ratio > 1:
                 console.print(f"[bold]Speed:[/] {b.name} is {speed_ratio:.2f}x faster")
             else:
@@ -414,13 +445,16 @@ def compare(
         data = {
             "cell_diff": diff.to_dict(),
             "fingerprints": {
-                "a": fp_a.to_dict() if "fp_a" in dir() else None,
-                "b": fp_b.to_dict() if "fp_b" in dir() else None,
+                "a": summary_a if "summary_a" in dir() else None,
+                "b": summary_b if "summary_b" in dir() else None,
             },
-            "comparison": fp_comparison if "fp_comparison" in dir() else None,
+            "comparison": {
+                "cosine_similarity": cosine_sim if "cosine_sim" in dir() else None,
+            } if "cosine_sim" in dir() else None,
         }
         output.write_text(json.dumps(data, indent=2, default=str))
         console.print(f"[green]Saved to:[/green] {output}")
+
 
 
 @app.command()
@@ -445,38 +479,49 @@ def fingerprint(
         console.print(f"[red]Error:[/red] File not found: {lib_file}")
         raise typer.Exit(1)
 
-    from .comparators.fingerprint import create_fingerprint
-    from .parsers.liberty import LibertyParser
+    from .data import Dataset
 
-    parser = LibertyParser()
-    lib = parser.parse(lib_file)
+    # Load via Dataset (new recommended approach)
+    ds = Dataset()
+    ds.load_files([lib_file])
 
-    fp = create_fingerprint(lib)
+    if not ds.entries or not ds.entries[0].normalizer:
+        console.print("[red]Error:[/red] No baseline inverter found in library")
+        raise typer.Exit(1)
+
+    # Generate summary using new Dataset API
+    summary_dict = ds.to_summary_dict()
+
+    baseline = summary_dict["baseline"]
+    cell_counts = summary_dict["cell_counts"]
+    func_types = summary_dict["function_types"]
 
     console.print(
         Panel.fit(
-            f"[bold green]Library:[/] {fp.name}\n"
-            f"[bold]Baseline Cell:[/] {fp.baseline_cell or 'N/A'}\n\n"
+            f"[bold green]Library:[/] {summary_dict['library']}\n"
+            f"[bold]Baseline Cell:[/] {baseline['cell']}\n\n"
             f"[bold]Baseline Metrics:[/]\n"
-            f"  Area: {fp.baseline_area:.4f} um²\n"
-            f"  Delay: {fp.baseline_delay:.4f} ns\n"
-            f"  Leakage: {fp.baseline_leakage:.4f} nW\n\n"
+            f"  Area: {baseline['area_um2']:.4f} um²\n"
+            f"  D0: {baseline['d0_ns']:.4f} ns\n"
+            f"  k: {baseline['k_ns_per_pf']:.4f} ns/pF\n"
+            f"  Leakage: {baseline['leakage']:.4e}\n\n"
             f"[bold]Cell Counts:[/]\n"
-            f"  Total: {fp.total_cells}\n"
-            f"  Combinational: {fp.combinational_cells}\n"
-            f"  Sequential: {fp.sequential_cells}\n\n"
+            f"  Total: {cell_counts['total']}\n"
+            f"  Combinational: {cell_counts['combinational']}\n"
+            f"  Sequential: {cell_counts['sequential']}\n\n"
             f"[bold]Function Types:[/]\n"
-            f"  INV: {fp.inverter_count} | BUF: {fp.buffer_count}\n"
-            f"  NAND: {fp.nand_count} | NOR: {fp.nor_count}\n"
-            f"  DFF: {fp.dff_count} | LATCH: {fp.latch_count}",
+            f"  INV: {func_types['inverter']} | BUF: {func_types['buffer']}\n"
+            f"  NAND: {func_types['nand']} | NOR: {func_types['nor']}\n"
+            f"  DFF: {func_types['dff']} | LATCH: {func_types['latch']}",
             title="Technology Fingerprint",
         )
     )
 
     if output:
-        data = fp.to_dict()
+        data = summary_dict
         output.write_text(json.dumps(data, indent=2, default=str))
         console.print(f"[green]Saved to:[/green] {output}")
+
 
 
 @app.command()

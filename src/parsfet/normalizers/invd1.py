@@ -10,10 +10,11 @@ the FO4 (Fanout-of-4) operating point.
 """
 
 from dataclasses import dataclass
+import statistics
 from typing import Optional
 
 from ..models.liberty import Cell, LibertyLibrary
-from .classifier import classify_cell
+from .classifier import CellType, classify_cell
 
 
 @dataclass
@@ -22,7 +23,7 @@ class NormalizedMetrics:
 
     Attributes:
         cell_name: Name of the cell.
-        cell_type: Classified type of the cell (e.g., 'nand', 'dff').
+        cell_type: Classified type of the cell (CellType enum).
         area_ratio: Cell area / Baseline area.
         d0_ratio: Intrinsic delay ratio (Cell D0 / Baseline D0).
         k_ratio: Load slope ratio (Cell k / Baseline k).
@@ -42,7 +43,7 @@ class NormalizedMetrics:
     """
 
     cell_name: str
-    cell_type: str = "unknown"  # From classifier: inverter, buffer, nand, etc.
+    cell_type: CellType = CellType.UNKNOWN  # From classifier
 
     # Core ratios
     area_ratio: float = 1.0  # cell_area / invd1_area
@@ -72,7 +73,7 @@ class NormalizedMetrics:
         """Converts the normalized metrics to a dictionary for JSON serialization."""
         return {
             "cell_name": self.cell_name,
-            "cell_type": self.cell_type,
+            "cell_type": self.cell_type.name.lower(),  # Serialize enum to lowercase string
             "area_ratio": self.area_ratio,
             "d0_ratio": self.d0_ratio,
             "k_ratio": self.k_ratio,
@@ -358,7 +359,8 @@ class INVD1Normalizer:
         # Cell type distribution
         type_counts: dict[str, int] = {}
         for m in metrics.values():
-            type_counts[m.cell_type] = type_counts.get(m.cell_type, 0) + 1
+            type_name = m.cell_type.name.lower()
+            type_counts[type_name] = type_counts.get(type_name, 0) + 1
 
         def stats(values: list[float]) -> dict:
             if not values:
@@ -369,6 +371,7 @@ class INVD1Normalizer:
                 "max": max(values),
                 "mean": sum(values) / len(values),
                 "median": sorted(values)[len(values) // 2],
+                "std": statistics.stdev(values) if len(values) > 1 else 0.0,
             }
 
         return {
@@ -396,6 +399,9 @@ class INVD1Normalizer:
         """
         return {
             "library": self.library.name,
+            "process_node": self.library.process_node,
+            "foundry": self.library.foundry,
+            "vt_flavor": self.library.vt_flavor.value if self.library.vt_flavor else None,
             "units": {
                 "time": "ns",
                 "capacitance": "pF",

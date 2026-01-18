@@ -11,11 +11,14 @@ Reference: Liberty User Guide (Synopsys)
 """
 
 import re
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
 from ..models.liberty import Cell, LibertyLibrary, LookupTable, Pin, PowerArc, TimingArc
 from .base import BaseParser
+
+logger = logging.getLogger(__name__)
 
 
 class LibertyParser(BaseParser[LibertyLibrary]):
@@ -45,6 +48,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         Returns:
             A populated LibertyLibrary object.
         """
+        logger.info(f"Parsing Liberty file: {path}")
         content = self._read_file(path, encoding="utf-8", errors="replace")
         # name is stem, but if it's .lib.gz we want the name without .lib
         name = path.name.split(".")[0]
@@ -60,6 +64,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         Returns:
             A populated LibertyLibrary object.
         """
+        logger.debug(f"Parsing content string, length: {len(content)}")
         # Preprocess: remove comments
         content = self._remove_comments(content)
 
@@ -85,7 +90,9 @@ class LibertyParser(BaseParser[LibertyLibrary]):
 
     def _tokenize(self, content: str) -> list[str]:
         """Converts the content string into a stream of tokens using pre-compiled pattern."""
-        return self._TOKEN_PATTERN.findall(content)
+        tokens = self._TOKEN_PATTERN.findall(content)
+        logger.debug(f"Generated {len(tokens)} tokens")
+        return tokens
 
     def _skip_to(self, target: str) -> None:
         """Skips tokens until the target token is found (consumes the target)."""
@@ -629,6 +636,7 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         - Missing baseline inverter (crucial for logical effort).
         - Cells with zero or missing area.
         """
+        logger.debug(f"Validating library: {data.name}")
         warnings = []
 
         if not data.cells:
@@ -640,6 +648,9 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         # Check for cells without area
         no_area = [name for name, cell in data.cells.items() if cell.area <= 0]
         if no_area:
-            warnings.append(f"{len(no_area)} cells have zero or missing area")
+            warnings.append(f"{len(no_area)} cells {no_area} have zero or missing area")
+
+        if warnings:
+            logger.warning(f"Validation warnings for {data.name}: {warnings}")
 
         return warnings
