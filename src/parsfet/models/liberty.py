@@ -7,7 +7,10 @@ interpolation, delay calculation, and linear model fitting.
 
 from typing import Any, Optional
 
+import numpy as np
 from pydantic import BaseModel, Field, computed_field
+from scipy.interpolate import RegularGridInterpolator
+from scipy.stats import linregress
 
 from .common import OperatingCondition, UnitNormalizer, VtFlavor
 
@@ -53,10 +56,16 @@ class LookupTable(BaseModel):
             val = self.values[mid]
             return float(val) if not isinstance(val, list) else 0.0
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Override to clear interpolator cache on data modification."""
+        if name in ("values", "index_1", "index_2") and hasattr(self, "_interpolator"):
+            del self._interpolator
+        super().__setattr__(name, value)
+
     def interpolate(self, slew: float, load: Optional[float] = None) -> float:
         """Interpolates the table at the given operating point.
 
-        Uses bilinear interpolation for 2D tables and linear interpolation for 1D tables.
+        Uses numpy.interp for 1D tables and scipy RegularGridInterpolator for 2D tables.
         Values outside the table indices are clamped to the nearest edge.
 
         Args:
@@ -70,84 +79,19 @@ class LookupTable(BaseModel):
             return 0.0
 
         if self.is_2d:
-            return self._interpolate_2d(slew, load if load is not None else 0.0)
+            # 2D interpolation with lazy caching
+            if not hasattr(self, "_interpolator"):
+                self._interpolator = RegularGridInterpolator(
+                    (self.index_1, self.index_2),
+                    np.array(self.values),
+                    bounds_error=False,
+                    fill_value=None,  # Extrapolate using nearest edge
+                )
+            # Scipy supports vectorized input: [[slew, load]]
+            return float(self._interpolator([[slew, load if load is not None else 0.0]])[0])
         else:
-            return self._interpolate_1d(slew)
-
-    def _interpolate_1d(self, x: float) -> float:
-        """Performs linear interpolation on a 1D table with clamping."""
-        if not self.index_1 or not self.values:
-            return self.center_value
-
-        # Clamp to valid range
-        x = max(min(x, max(self.index_1)), min(self.index_1))
-
-        # Find bracketing indices
-        idx = self._find_bracket(self.index_1, x)
-        if idx >= len(self.index_1) - 1:
-            return float(self.values[-1])
-
-        # Linear interpolation
-        x0, x1 = self.index_1[idx], self.index_1[idx + 1]
-        y0, y1 = float(self.values[idx]), float(self.values[idx + 1])
-
-        if x1 == x0:
-            return y0
-
-        t = (x - x0) / (x1 - x0)
-        return y0 + t * (y1 - y0)
-
-    def _interpolate_2d(self, slew: float, load: float) -> float:
-        """Performs bilinear interpolation on a 2D table with clamping."""
-        if not self.index_1 or not self.index_2 or not self.values:
-            return self.center_value
-
-        # Clamp to valid ranges
-        slew = max(min(slew, max(self.index_1)), min(self.index_1))
-        load = max(min(load, max(self.index_2)), min(self.index_2))
-
-        # Find bracketing indices
-        i = self._find_bracket(self.index_1, slew)
-        j = self._find_bracket(self.index_2, load)
-
-        # Clamp indices
-        i = min(i, len(self.index_1) - 2)
-        j = min(j, len(self.index_2) - 2)
-        i = max(i, 0)
-        j = max(j, 0)
-
-        # Get corner values
-        try:
-            v00 = float(self.values[i][j])
-            v01 = float(self.values[i][j + 1]) if j + 1 < len(self.values[i]) else v00
-            v10 = float(self.values[i + 1][j]) if i + 1 < len(self.values) else v00
-            v11 = (
-                float(self.values[i + 1][j + 1])
-                if (i + 1 < len(self.values) and j + 1 < len(self.values[i + 1]))
-                else v00
-            )
-        except (IndexError, TypeError):
-            return self.center_value
-
-        # Compute interpolation weights
-        x0, x1 = self.index_1[i], self.index_1[min(i + 1, len(self.index_1) - 1)]
-        y0, y1 = self.index_2[j], self.index_2[min(j + 1, len(self.index_2) - 1)]
-
-        tx = (slew - x0) / (x1 - x0) if x1 != x0 else 0.0
-        ty = (load - y0) / (y1 - y0) if y1 != y0 else 0.0
-
-        # Bilinear interpolation
-        v0 = v00 + tx * (v10 - v00)
-        v1 = v01 + tx * (v11 - v01)
-        return v0 + ty * (v1 - v0)
-
-    @staticmethod
-    def _find_bracket(arr: list[float], val: float) -> int:
-        """Finds index i such that arr[i] <= val < arr[i+1]."""
-        for i in range(len(arr) - 1):
-            if arr[i] <= val < arr[i + 1]:
-                return i
-        return len(arr) - 2 if arr else 0
+            # 1D interpolation
+            return float(np.interp(slew, self.index_1, self.values))
 
     def fit_linear_model(self, slew: float) -> tuple[float, float, float]:
         """Fits a linear delay model: D = D0 + k * Load.
@@ -168,32 +112,48 @@ class LookupTable(BaseModel):
             # 1D table or insufficient data
             return (self.center_value, 0.0, 1.0)
 
-        # Sample delay at multiple load points along the fixed slew
-        loads = self.index_2
-        delays = [self.interpolate(slew, load) for load in loads]
-
-        # Simple linear regression: D = D₀ + k × Load
-        # Using least squares: k = Σ((x-x̄)(y-ȳ)) / Σ((x-x̄)²)
+        # Optimization: Vectorized query & Manual Numpy Regression
+        # Construct (N, 2) array of query points: [[slew, load0], [slew, load1], ...]
+        loads = np.array(self.index_2)
         n = len(loads)
-        mean_load = sum(loads) / n
-        mean_delay = sum(delays) / n
+        
+        # Ensure interpolator is primed
+        if not hasattr(self, "_interpolator"):
+             self._interpolator = RegularGridInterpolator(
+                (self.index_1, self.index_2),
+                np.array(self.values),
+                bounds_error=False,
+                fill_value=None,
+            )
+            
+        # Vectorized interpolation
+        points = np.column_stack((np.full_like(loads, slew), loads))
+        delays = self._interpolator(points)
 
-        numerator = sum((loads[i] - mean_load) * (delays[i] - mean_delay) for i in range(n))
-        denominator = sum((loads[i] - mean_load) ** 2 for i in range(n))
-
+        # Manual Numpy Regression (Faster than linregress for small N)
+        # Slope = (N*Σxy - ΣxΣy) / (N*Σx² - (Σx)²)
+        # Intercept = (Σy - Slope*Σx) / N
+        sum_x = np.sum(loads)
+        sum_y = np.sum(delays)
+        sum_xy = np.dot(loads, delays)
+        sum_xx = np.dot(loads, loads)
+        
+        denominator = n * sum_xx - sum_x * sum_x
         if denominator == 0:
-            return (mean_delay, 0.0, 1.0)
-
-        slope = numerator / denominator  # k: delay per unit load
-        intercept = mean_delay - slope * mean_load  # D₀: intrinsic delay
-
-        # Compute R² (coefficient of determination)
+            return (float(np.mean(delays)), 0.0, 1.0)
+            
+        slope = (n * sum_xy - sum_x * sum_y) / denominator
+        intercept = (sum_y - slope * sum_x) / n
+        
         d0 = max(intercept, 0.0)
-        ss_res = sum((delays[i] - (d0 + slope * loads[i])) ** 2 for i in range(n))
-        ss_tot = sum((delays[i] - mean_delay) ** 2 for i in range(n))
+        
+        # R-squared calculation
+        y_pred = d0 + slope * loads
+        ss_res = np.sum((delays - y_pred) ** 2)
+        ss_tot = np.sum((delays - np.mean(delays)) ** 2)
         r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 1.0
 
-        return (d0, slope, r_squared)  # Ensure non-negative intrinsic delay
+        return (d0, float(slope), float(r_squared))
 
 
 class Pin(BaseModel):

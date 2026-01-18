@@ -597,8 +597,8 @@ class LibertyParser(BaseParser[LibertyLibrary]):
             # Clean up trailing semicolons if they got attached (due to tokenizer)
             val = val.strip().rstrip(";")
             val = val.strip("\"'")
-            if not val and default:  # Fallback to default if empty string?
-                # No, if explicit empty string, return it. But here it might be parsing issue.
+            if not val and default:
+                # Return explicit empty string if present, otherwise fallback
                 pass
             return val
         return str(val)

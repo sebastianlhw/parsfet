@@ -10,8 +10,9 @@ the FO4 (Fanout-of-4) operating point.
 """
 
 from dataclasses import dataclass
-import statistics
 from typing import Optional
+
+import numpy as np
 
 from ..models.liberty import Cell, LibertyLibrary
 from .classifier import CellType, classify_cell
@@ -484,15 +485,17 @@ class INVD1Normalizer:
             type_counts[type_name] = type_counts.get(type_name, 0) + 1
 
         def stats(values: list[float]) -> dict:
+            """Calculate statistics using numpy for consistency."""
             if not values:
                 return {"count": 0}
+            arr = np.array(values)
             return {
-                "count": len(values),
-                "min": min(values),
-                "max": max(values),
-                "mean": sum(values) / len(values),
-                "median": sorted(values)[len(values) // 2],
-                "std": statistics.stdev(values) if len(values) > 1 else 0.0,
+                "count": len(arr),
+                "min": float(arr.min()),
+                "max": float(arr.max()),
+                "mean": float(arr.mean()),
+                "median": float(np.median(arr)),
+                "std": float(arr.std(ddof=1)) if len(arr) > 1 else 0.0,
             }
 
         return {
