@@ -7,8 +7,8 @@ Technology LEF (containing only layer/via definitions).
 Reference: LEF/DEF Language Reference (Cadence)
 """
 
-import re
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 

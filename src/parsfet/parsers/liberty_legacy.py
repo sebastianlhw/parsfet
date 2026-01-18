@@ -10,8 +10,8 @@ Liberty syntax, including:
 Reference: Liberty User Guide (Synopsys)
 """
 
-import re
 import logging
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -83,7 +83,7 @@ class LegacyLibertyParser(BaseParser[LibertyLibrary]):
 
     def _remove_comments(self, content: str) -> str:
         """Removes C-style (/* ... */) and line (// ...) comments.
-        
+
         Also removes backslash line continuations to handle multi-line values.
         """
         # Remove /* ... */ comments
@@ -91,7 +91,7 @@ class LegacyLibertyParser(BaseParser[LibertyLibrary]):
         # Remove // ... comments
         content = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
         # Remove backslash line continuations (fixes multi-line values parsing)
-        content = re.sub(r'\\\s*\n\s*', ' ', content)
+        content = re.sub(r"\\\s*\n\s*", " ", content)
         return content
 
     def _tokenize(self, content: str) -> list[str]:
@@ -369,10 +369,24 @@ class LegacyLibertyParser(BaseParser[LibertyLibrary]):
 
         # Collect undefined attributes (not in known set)
         known_cell_attrs = {
-            "_name", "_qualifier", "_groups", "area", "cell_leakage_power",
-            "dont_use", "dont_touch", "clock_gating_integrated_cell",
-            "pin", "ff", "latch", "leakage_power", "pg_pin", "statetable",
-            "bundle", "bus", "test_cell", "mode_definition"
+            "_name",
+            "_qualifier",
+            "_groups",
+            "area",
+            "cell_leakage_power",
+            "dont_use",
+            "dont_touch",
+            "clock_gating_integrated_cell",
+            "pin",
+            "ff",
+            "latch",
+            "leakage_power",
+            "pg_pin",
+            "statetable",
+            "bundle",
+            "bus",
+            "test_cell",
+            "mode_definition",
         }
         for key, value in ast.items():
             if key not in known_cell_attrs and not key.startswith("_"):
@@ -402,12 +416,27 @@ class LegacyLibertyParser(BaseParser[LibertyLibrary]):
 
         # Collect undefined attributes (not in known set)
         known_pin_attrs = {
-            "_name", "_qualifier", "_groups", "direction", "capacitance",
-            "max_capacitance", "min_capacitance", "function", "clock",
-            "clock_gate_clock_pin", "clock_gate_enable_pin",
-            "rise_capacitance", "fall_capacitance", "timing", "internal_power",
-            "driver_waveform_rise", "driver_waveform_fall", "input_voltage",
-            "output_voltage", "related_power_pin", "related_ground_pin"
+            "_name",
+            "_qualifier",
+            "_groups",
+            "direction",
+            "capacitance",
+            "max_capacitance",
+            "min_capacitance",
+            "function",
+            "clock",
+            "clock_gate_clock_pin",
+            "clock_gate_enable_pin",
+            "rise_capacitance",
+            "fall_capacitance",
+            "timing",
+            "internal_power",
+            "driver_waveform_rise",
+            "driver_waveform_fall",
+            "input_voltage",
+            "output_voltage",
+            "related_power_pin",
+            "related_ground_pin",
         }
         for key, value in ast.items():
             if key not in known_pin_attrs and not key.startswith("_"):

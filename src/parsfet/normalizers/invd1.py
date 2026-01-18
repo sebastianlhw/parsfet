@@ -458,7 +458,6 @@ class INVD1Normalizer:
             fit_residual_pct=0.0,
         )
 
-
     def get_summary(self) -> dict:
         """Generates summary statistics for the normalized library.
 

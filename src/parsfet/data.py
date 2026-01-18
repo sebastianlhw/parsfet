@@ -221,8 +221,6 @@ class Dataset:
 
         self.entries.append(entry)
 
-
-
     def load_lef(
         self,
         paths: list[Path | str],
@@ -418,7 +416,6 @@ class Dataset:
                 # Use Cell object (from .lib file)
                 metrics[cell_name] = normalizer.normalize(cell)
 
-
         # Merge LEF data
         combined_lef: dict[str, CellPhysical] = {}
         for entry in self.entries:
@@ -450,7 +447,6 @@ class Dataset:
         result._cell_sources = cell_sources  # Store at dataset level too
 
         return result
-
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert all loaded data to a flat Pandas DataFrame.

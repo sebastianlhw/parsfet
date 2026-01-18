@@ -35,7 +35,9 @@ from .log_utils import setup_logging
 
 @app.callback(invoke_without_command=False)
 def main(
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress debug logs (show warnings/errors only)"),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress debug logs (show warnings/errors only)"
+    ),
 ):
     """Pars-FET: VLSI Technology Abstraction Framework."""
     setup_logging(quiet=quiet)
@@ -411,27 +413,25 @@ def compare(
     try:
         ds_a = Dataset().load_files([lib_a])
         ds_b = Dataset().load_files([lib_b])
-        
+
         vec_a = ds_a.to_vector()
         vec_b = ds_b.to_vector()
-        
+
         # Compute cosine similarity
         dot = sum(a * b for a, b in zip(vec_a, vec_b))
         mag_a = sum(a * a for a in vec_a) ** 0.5
         mag_b = sum(b * b for b in vec_b) ** 0.5
         cosine_sim = dot / (mag_a * mag_b) if (mag_a > 0 and mag_b > 0) else 0.0
 
-        console.print(
-            f"\n[bold]Fingerprint Similarity:[/] {cosine_sim:.3f}"
-        )
+        console.print(f"\n[bold]Fingerprint Similarity:[/] {cosine_sim:.3f}")
 
         # Compare baseline speeds
         summary_a = ds_a.to_summary_dict()
         summary_b = ds_b.to_summary_dict()
-        
+
         d0_a = summary_a.get("baseline", {}).get("d0_ns", 0)
         d0_b = summary_b.get("baseline", {}).get("d0_ns", 0)
-        
+
         if d0_a > 0 and d0_b > 0:
             speed_ratio = d0_a / d0_b
             if speed_ratio > 1:
@@ -450,11 +450,12 @@ def compare(
             },
             "comparison": {
                 "cosine_similarity": cosine_sim if "cosine_sim" in dir() else None,
-            } if "cosine_sim" in dir() else None,
+            }
+            if "cosine_sim" in dir()
+            else None,
         }
         output.write_text(json.dumps(data, indent=2, default=str))
         console.print(f"[green]Saved to:[/green] {output}")
-
 
 
 @app.command()
@@ -521,7 +522,6 @@ def fingerprint(
         data = summary_dict
         output.write_text(json.dumps(data, indent=2, default=str))
         console.print(f"[green]Saved to:[/green] {output}")
-
 
 
 @app.command()

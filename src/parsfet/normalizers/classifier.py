@@ -32,10 +32,11 @@ MAX_INPUTS = 6  # Beyond this, fall back to 'unknown' (2^6 = 64 evaluations)
 
 class CellType(Enum):
     """Standard cell type classification.
-    
+
     Enum values represent the semantic category of a standard cell
     based on its boolean function or sequential behavior.
     """
+
     INVERTER = auto()
     BUFFER = auto()
     AND = auto()
