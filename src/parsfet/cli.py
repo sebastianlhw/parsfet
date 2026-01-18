@@ -568,7 +568,9 @@ def export(
 
 @app.command()
 def combine(
-    lib_files: list[Path] = typer.Argument(..., help="Liberty files to combine"),
+    lib_files: list[Path] = typer.Argument(
+        ..., help="Liberty (.lib) or JSON (.json) files to combine"
+    ),
     lef: Optional[list[Path]] = typer.Option(
         None, "--lef", "-l", help="LEF file(s) for physical data"
     ),
@@ -581,18 +583,22 @@ def combine(
         False, "--allow-duplicates", help="Allow duplicates (first wins)"
     ),
 ):
-    """Combines multiple Liberty files into one unified dataset.
+    """Combines multiple Liberty or JSON files into one unified dataset.
 
-    This command merges cells from multiple .lib files into a single dataset
-    with unified normalization. A baseline inverter is found from the combined
-    cell pool, and ALL cells are normalized against this single baseline.
+    This command merges cells from multiple .lib files AND/OR previously-exported
+    .json files into a single dataset with unified normalization. A baseline
+    inverter is found from the combined cell pool, and ALL cells are re-normalized
+    against this single baseline.
+
+    When JSON exports are included, the raw cell metrics (area, d0, k, leakage,
+    input_cap) are used for re-normalization against the new unified baseline.
 
     By default, an error is raised if duplicate cell names are found across files.
     Use --allow-duplicates to proceed (first occurrence wins) or --check-duplicates
     to just report duplicates without generating output.
 
     Args:
-        lib_files: One or more Liberty (.lib) files to combine.
+        lib_files: Liberty (.lib) or JSON (.json) files to combine.
         lef: Optional. LEF files for physical cell data.
         tech_lef: Optional. TechLEF file for technology rules.
         output: Optional. Path to save the combined JSON output.
@@ -600,8 +606,11 @@ def combine(
         allow_duplicates: If True, allow duplicate cells (first wins).
 
     Examples:
-        # Combine two libraries
+        # Combine two Liberty libraries
         $ parsfet combine lib1.lib lib2.lib --output combined.json
+
+        # Combine a JSON export with a Liberty file
+        $ parsfet combine export.json lib2.lib -o merged.json --allow-duplicates
 
         # Check for duplicates first
         $ parsfet combine *.lib --check-duplicates
@@ -609,6 +618,7 @@ def combine(
         # Force combine with duplicates
         $ parsfet combine lib1.lib lib2.lib --allow-duplicates -o merged.json
     """
+
     from .data import Dataset
     from .exceptions import DuplicateCellError
 

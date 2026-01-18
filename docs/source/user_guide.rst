@@ -116,6 +116,22 @@ This gives you a consistent reference point. An RVT inverter might show ``d0_rat
 
 **Source Tracking**: The output JSON and DataFrame include a ``source_file`` field so you always know where each cell came from.
 
+Combining JSON Exports with Liberty Files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can also combine previously-exported JSON files with Liberty files. This is useful when you want to incrementally build a dataset or merge exports from different analysis runs.
+
+.. code-block:: bash
+
+   # First export a normalized library
+   parsfet normalize lvt.lib --output lvt_export.json
+
+   # Later, combine it with another library
+   parsfet combine lvt_export.json hvt.lib --output merged.json --allow-duplicates
+
+All cells—whether from JSON or Liberty—are re-normalized against the unified baseline found from the combined pool. The raw metrics (area, d0, k, leakage, input_cap) stored in the JSON export are used for re-normalization.
+
+
 Python API
 ----------
 
@@ -190,6 +206,17 @@ When you have cells spread across multiple files, load them all and call ``combi
    print(inv_df[["cell", "d0_ratio", "source_file"]])
 
 The key insight: after ``combine()``, every cell is normalized to the same baseline. This makes cross-library comparisons meaningful. The ``source_file`` column tells you where each cell originated.
+
+**Combining JSON Exports**: You can also load previously-exported JSON files:
+
+.. code-block:: python
+
+   ds = Dataset()
+   ds.load_files(["export.json", "new_lib.lib"], normalize=False)
+   combined = ds.combine(allow_duplicates=True)
+
+The ``load_files()`` method auto-detects the file format (`.json` vs `.lib`). Raw metrics from JSON exports are used for re-normalization against the new unified baseline.
+
 
 **Architecture**:
 

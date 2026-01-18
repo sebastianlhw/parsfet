@@ -61,6 +61,8 @@ class LibraryEntry:
         lef_cells: Dictionary of cell name to CellPhysical (from LEF).
         tech_info: TechInfo from TechLEF (if loaded).
         source_file: Path to the source Liberty file.
+        from_json: True if this entry was loaded from a JSON export.
+        raw_metrics_cache: Raw metrics for cells loaded from JSON (for re-normalization).
     """
 
     library: LibertyLibrary
@@ -69,6 +71,9 @@ class LibraryEntry:
     lef_cells: dict[str, CellPhysical] = field(default_factory=dict)
     tech_info: Optional[TechInfo] = None
     source_file: Optional[Path] = None
+    # For JSON imports
+    from_json: bool = False
+    raw_metrics_cache: dict[str, dict] = field(default_factory=dict)
 
 
 class Dataset:
@@ -94,10 +99,11 @@ class Dataset:
         self._tech_lef_parser = TechLEFParser()
 
     def load_files(self, paths: list[Path | str], normalize: bool = True) -> "Dataset":
-        """Load a list of Liberty files.
+        """Load a list of Liberty or JSON files.
 
         Args:
-            paths: List of file paths (Path or str) to Liberty (.lib) files.
+            paths: List of file paths (Path or str) to Liberty (.lib) or
+                previously-exported JSON (.json) files.
             normalize: If True, normalize cells immediately (original behavior).
                 If False, defer normalization for later combine() call.
 
@@ -113,30 +119,109 @@ class Dataset:
             if not path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
 
-            lib = self._parser.parse(path)
-
-            if normalize:
-                try:
-                    normalizer = INVD1Normalizer(lib)
-                    metrics = normalizer.normalize_all()
-                except ValueError:
-                    # No baseline cell - skip normalization
-                    normalizer = None
-                    metrics = {}
+            # Dispatch based on file extension
+            if path.suffix.lower() == ".json":
+                self._load_json_file(path, normalize=normalize)
             else:
-                normalizer = None
-                metrics = {}
-
-            self.entries.append(
-                LibraryEntry(
-                    library=lib,
-                    normalizer=normalizer,
-                    metrics=metrics,
-                    source_file=path,
-                )
-            )
+                # Assume Liberty format (.lib or .lib.gz)
+                self._load_lib_file(path, normalize=normalize)
 
         return self
+
+    def _load_lib_file(self, path: Path, normalize: bool = True) -> None:
+        """Load a single Liberty file."""
+        lib = self._parser.parse(path)
+
+        if normalize:
+            try:
+                normalizer = INVD1Normalizer(lib)
+                metrics = normalizer.normalize_all()
+            except ValueError:
+                # No baseline cell - skip normalization
+                normalizer = None
+                metrics = {}
+        else:
+            normalizer = None
+            metrics = {}
+
+        self.entries.append(
+            LibraryEntry(
+                library=lib,
+                normalizer=normalizer,
+                metrics=metrics,
+                source_file=path,
+            )
+        )
+
+    def _load_json_file(self, path: Path, normalize: bool = True) -> None:
+        """Load a previously-exported JSON file.
+
+        Creates a minimal LibertyLibrary from the JSON data to enable
+        re-normalization with combine().
+        """
+        from .models.export import ExportedLibrary
+        from .models.liberty import Cell, LibertyLibrary
+
+        # Load and validate JSON
+        exported = ExportedLibrary.from_json_file(str(path))
+
+        # Create minimal Cell objects from exported data
+        cells: dict[str, Cell] = {}
+        for cell_name, exported_cell in exported.cells.items():
+            raw = exported_cell.raw
+            if raw:
+                cells[cell_name] = Cell(
+                    name=cell_name,
+                    area=raw.area_um2,
+                    cell_leakage_power=raw.leakage,
+                    is_sequential=exported_cell.is_sequential,
+                    # Note: We don't have timing arcs, but that's OK -
+                    # normalize_from_raw() will be used instead
+                )
+            else:
+                # Fallback: reconstruct from ratios
+                cells[cell_name] = Cell(
+                    name=cell_name,
+                    area=exported_cell.area_ratio * exported.baseline.area_um2,
+                    cell_leakage_power=exported_cell.leakage_ratio * exported.baseline.leakage,
+                    is_sequential=exported_cell.is_sequential,
+                )
+
+        # Create minimal LibertyLibrary
+        lib = LibertyLibrary(
+            name=exported.library,
+            cells=cells,
+        )
+
+        # Store raw metrics for later use in combine()
+        raw_metrics_cache = {}
+        for cell_name, exported_cell in exported.cells.items():
+            if exported_cell.raw:
+                raw_metrics_cache[cell_name] = {
+                    "area": exported_cell.raw.area_um2,
+                    "d0_ns": exported_cell.raw.d0_ns,
+                    "k_ns_per_pf": exported_cell.raw.k_ns_per_pf,
+                    "leakage": exported_cell.raw.leakage,
+                    "input_cap": exported_cell.raw.input_cap_pf,
+                    "cell_type": exported_cell.cell_type,
+                    "num_inputs": exported_cell.num_inputs,
+                    "num_outputs": exported_cell.num_outputs,
+                    "is_sequential": exported_cell.is_sequential,
+                }
+
+        # Create entry (normalization happens in combine() using raw metrics)
+        entry = LibraryEntry(
+            library=lib,
+            normalizer=None,  # Will be set during combine()
+            metrics={},
+            source_file=path,
+            from_json=True,
+            raw_metrics_cache=raw_metrics_cache,
+        )
+
+        self.entries.append(entry)
+
+
 
     def load_lef(
         self,
@@ -225,9 +310,10 @@ class Dataset:
     def combine(self, allow_duplicates: bool = False) -> "Dataset":
         """Combine all entries into ONE grand dataset with unified normalization.
 
-        This method merges all cells from all loaded libraries into a single
-        unified dataset. A baseline inverter is found from the combined cell
-        pool, and ALL cells are re-normalized against this single baseline.
+        This method merges all cells from all loaded libraries (including
+        previously-exported JSON files) into a single unified dataset.
+        A baseline inverter is found from the combined cell pool, and ALL
+        cells are re-normalized against this single baseline.
 
         Args:
             allow_duplicates: If False (default), raise DuplicateCellError when
@@ -243,7 +329,7 @@ class Dataset:
 
         Example:
             >>> ds = Dataset()
-            >>> ds.load_files(["lib1.lib", "lib2.lib"], normalize=False)
+            >>> ds.load_files(["lib1.lib", "export.json"], normalize=False)
             >>> combined = ds.combine()
             >>> df = combined.to_dataframe()  # Unified normalization
         """
@@ -263,6 +349,13 @@ class Dataset:
         combined_cells: dict[str, Cell] = {}
         cell_sources: dict[str, Path] = {}  # Track origin for each cell
 
+        # Build index: source_path → entry (for O(1) lookup during normalization)
+        entry_by_source: dict[Path, LibraryEntry] = {}
+        for entry in self.entries:
+            source = entry.source_file or Path("<unknown>")
+            entry_by_source[source] = entry
+
+        # Collect all cells (single pass)
         for entry in self.entries:
             source = entry.source_file or Path("<unknown>")
             for cell_name, cell in entry.library.cells.items():
@@ -297,9 +390,34 @@ class Dataset:
         # Create normalizer from combined library (finds baseline from all cells)
         try:
             normalizer = INVD1Normalizer(combined_lib)
-            metrics = normalizer.normalize_all()
         except ValueError as e:
             raise ValueError(f"No baseline cell found in combined dataset: {e}") from e
+
+        # Normalize all cells (single pass with source-based dispatch)
+        metrics: dict[str, NormalizedMetrics] = {}
+        for cell_name, cell in combined_lib.cells.items():
+            source_path = cell_sources[cell_name]
+            source_entry = entry_by_source[source_path]
+
+            if source_entry.from_json and cell_name in source_entry.raw_metrics_cache:
+                # Use raw metrics from JSON
+                raw = source_entry.raw_metrics_cache[cell_name]
+                metrics[cell_name] = normalizer.normalize_from_raw(
+                    cell_name=cell_name,
+                    raw_area=raw["area"],
+                    raw_d0_ns=raw["d0_ns"],
+                    raw_k_ns_per_pf=raw["k_ns_per_pf"],
+                    raw_leakage=raw["leakage"],
+                    raw_input_cap=raw["input_cap"],
+                    cell_type_str=raw.get("cell_type", "unknown"),
+                    num_inputs=raw.get("num_inputs", 1),
+                    num_outputs=raw.get("num_outputs", 1),
+                    is_sequential=raw.get("is_sequential", False),
+                )
+            else:
+                # Use Cell object (from .lib file)
+                metrics[cell_name] = normalizer.normalize(cell)
+
 
         # Merge LEF data
         combined_lef: dict[str, CellPhysical] = {}
@@ -332,6 +450,7 @@ class Dataset:
         result._cell_sources = cell_sources  # Store at dataset level too
 
         return result
+
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert all loaded data to a flat Pandas DataFrame.

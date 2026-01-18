@@ -337,6 +337,82 @@ class INVD1Normalizer:
         """
         return {name: self.normalize(cell) for name, cell in self.library.cells.items()}
 
+    def normalize_from_raw(
+        self,
+        cell_name: str,
+        raw_area: float,
+        raw_d0_ns: float,
+        raw_k_ns_per_pf: float,
+        raw_leakage: float,
+        raw_input_cap: float,
+        cell_type_str: str = "unknown",
+        num_inputs: int = 1,
+        num_outputs: int = 1,
+        is_sequential: bool = False,
+    ) -> NormalizedMetrics:
+        """Normalize a cell using only raw metrics (no Cell object needed).
+
+        This method is used when re-normalizing cells imported from a JSON export.
+        The raw metrics should already be in canonical units (ns, pF, um²).
+
+        Args:
+            cell_name: Name of the cell.
+            raw_area: Cell area in um².
+            raw_d0_ns: Intrinsic delay in ns.
+            raw_k_ns_per_pf: Load slope in ns/pF.
+            raw_leakage: Leakage power.
+            raw_input_cap: Input capacitance in pF.
+            cell_type_str: Cell type as lowercase string (e.g., "nand", "inverter").
+            num_inputs: Number of input pins.
+            num_outputs: Number of output pins.
+            is_sequential: True if sequential cell.
+
+        Returns:
+            NormalizedMetrics with ratios computed against current baseline.
+        """
+        # Convert cell_type string to enum
+        try:
+            cell_type = CellType[cell_type_str.upper()]
+        except KeyError:
+            cell_type = CellType.UNKNOWN
+
+        # Compute ratios against baseline
+        area_ratio = raw_area / self.baseline.area if self.baseline.area > 0 else 0.0
+        d0_ratio = raw_d0_ns / self.baseline.d0 if self.baseline.d0 > 0 and raw_d0_ns > 0 else 1.0
+        k_ratio = (
+            raw_k_ns_per_pf / self.baseline.k
+            if self.baseline.k > 0 and raw_k_ns_per_pf > 0
+            else 1.0
+        )
+        leakage_ratio = raw_leakage / self.baseline.leakage if self.baseline.leakage > 0 else 0.0
+        input_cap_ratio = (
+            raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0
+        )
+
+        drive_strength = area_ratio if area_ratio > 0 else 1.0
+
+        return NormalizedMetrics(
+            cell_name=cell_name,
+            cell_type=cell_type,
+            area_ratio=area_ratio,
+            d0_ratio=d0_ratio,
+            k_ratio=k_ratio,
+            leakage_ratio=leakage_ratio,
+            input_cap_ratio=input_cap_ratio,
+            drive_strength=drive_strength,
+            num_inputs=num_inputs,
+            num_outputs=num_outputs,
+            is_sequential=is_sequential,
+            raw_area=raw_area,
+            raw_d0_ns=raw_d0_ns,
+            raw_k_ns_per_pf=raw_k_ns_per_pf,
+            raw_leakage=raw_leakage,
+            raw_input_cap=raw_input_cap,
+            fit_r_squared=1.0,  # No fit data available from raw
+            fit_residual_pct=0.0,
+        )
+
+
     def get_summary(self) -> dict:
         """Generates summary statistics for the normalized library.
 
