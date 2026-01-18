@@ -17,8 +17,27 @@ from .base import BaseParser
 class LibertyJSONParser(BaseParser[LibertyLibrary]):
     """Parser for Liberty JSON format (.lib.json) used by SkyWater PDK.
 
-    Handles the JSON structure where cell attributes and timing arcs are stored
-    as key-value pairs (e.g., "pin,A": {...}).
+    This parser handles the JSON-based Liberty representation used in the
+    SkyWater 130nm PDK (https://github.com/google/skywater-pdk). In this format,
+    cell timing data is stored as individual JSON files per cell, with attributes
+    and timing arcs stored as key-value pairs (e.g., "pin,A": {...}).
+
+    Usage:
+        This parser is intended for loading SkyWater PDK source files directly.
+        For loading Pars-FET's own JSON exports (created by `parsfet normalize`),
+        use `Dataset.load_files()` which uses the `ExportedLibrary` Pydantic model.
+
+    Example:
+        >>> parser = LibertyJSONParser()
+        >>> lib = parser.parse_library_dir(
+        ...     Path("sky130_fd_sc_hd"),
+        ...     corner="tt_025C_1v80"
+        ... )
+        >>> print(f"Loaded {len(lib.cells)} cells")
+
+    Note:
+        This is separate from the standard `LibertyParser` which handles
+        traditional text-based .lib files.
     """
 
     def parse(self, path: Path) -> LibertyLibrary:

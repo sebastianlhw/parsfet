@@ -117,6 +117,51 @@ class NormalizedMetrics:
             1.0 if self.is_sequential else 0.0,
         ]
 
+    def to_exported_cell(self) -> "ExportedCell":
+        """Converts to Pydantic ExportedCell for JSON serialization.
+
+        This provides a typed conversion to the export schema, useful when
+        building ExportedLibrary objects programmatically.
+
+        Returns:
+            An ExportedCell instance with all fields populated.
+        """
+        from ..models.export import (
+            ExportedCell,
+            ExportedDelayModel,
+            ExportedFitQuality,
+            ExportedRawMetrics,
+        )
+
+        return ExportedCell(
+            cell_name=self.cell_name,
+            cell_type=self.cell_type.name.lower(),
+            area_ratio=self.area_ratio,
+            d0_ratio=self.d0_ratio,
+            k_ratio=self.k_ratio,
+            leakage_ratio=self.leakage_ratio,
+            input_cap_ratio=self.input_cap_ratio,
+            drive_strength=self.drive_strength,
+            num_inputs=self.num_inputs,
+            num_outputs=self.num_outputs,
+            is_sequential=self.is_sequential,
+            delay_model=ExportedDelayModel(
+                d0_ns=self.raw_d0_ns,
+                k_ns_per_pf=self.raw_k_ns_per_pf,
+            ),
+            fit_quality=ExportedFitQuality(
+                r_squared=self.fit_r_squared,
+                fo4_residual_pct=self.fit_residual_pct,
+            ),
+            raw=ExportedRawMetrics(
+                area_um2=self.raw_area,
+                d0_ns=self.raw_d0_ns,
+                k_ns_per_pf=self.raw_k_ns_per_pf,
+                leakage=self.raw_leakage,
+                input_cap_pf=self.raw_input_cap,
+            ),
+        )
+
 
 @dataclass
 class BaselineMetrics:
