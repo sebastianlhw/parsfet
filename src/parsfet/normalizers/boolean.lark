@@ -1,0 +1,49 @@
+// Boolean Expression Grammar for Liberty Function Strings
+// 
+// Handles Liberty-specific syntax:
+//   - Prefix NOT: !, ~
+//   - Postfix NOT: ' (e.g., A' means NOT A)
+//   - AND: &, *
+//   - OR: |, +
+//   - XOR: ^
+//   - Parentheses for grouping
+//
+// Operator precedence (highest to lowest):
+//   1. NOT (prefix !, ~ and postfix ')
+//   2. AND (&, *)
+//   3. XOR (^)
+//   4. OR (|, +)
+
+?start: expr
+
+// OR has lowest precedence
+?expr: xor_term (OR xor_term)*
+
+// XOR is between OR and AND
+?xor_term: term (XOR term)*
+
+// AND binds tighter than XOR
+?term: factor (AND factor)*
+
+// NOT (prefix) binds tightest
+?factor: NOT factor       -> not_expr
+       | primary
+
+// Primary: parenthesized expression or variable, with optional postfix NOT
+?primary: "(" expr ")" postfix*  -> paren_expr
+        | NAME postfix*          -> var_expr
+
+// Postfix negation marker (Liberty uses A' for NOT A)
+postfix: "'"
+
+// Operator terminals
+OR: "|" | "+"
+AND: "&" | "*"
+XOR: "^"
+NOT: "!" | "~"
+
+// Variable names: alphanumeric, starting with letter or underscore
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+
+// Ignore whitespace
+%ignore /\s+/
