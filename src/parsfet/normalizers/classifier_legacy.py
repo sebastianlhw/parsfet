@@ -1,28 +1,27 @@
-"""Cell Type Classifier using Lark Parser.
+"""Cell Type Classifier (Legacy Hand-Rolled Parser).
 
 This module categorizes standard cells based on their logical function.
-It uses a Lark grammar to parse boolean function strings into an AST,
-evaluates truth tables, and classifies cells by comparing signatures
-to known gate patterns.
+It parses boolean function strings into an AST, evaluates truth tables,
+and classifies cells by comparing signatures to known gate patterns.
 
 This semantic approach correctly handles:
 - De Morgan equivalents: !(A|B) == !A & !B → 'nor'
 - Multiple syntax variants: A', ~A, !A → all recognized as NOT
 - Arbitrary input counts up to MAX_INPUTS
 
-This is the new Lark-based implementation. For the legacy hand-rolled
-parser, see classifier_legacy.py.
+This is the legacy hand-rolled recursive descent parser implementation.
+For the new Lark-based implementation, see classifier.py.
 """
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
-from enum import Enum, auto
-from functools import cache, lru_cache
-from pathlib import Path
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from lark import Lark, Transformer, v_args
+# Import CellType from the new classifier to ensure enum parity
+from .classifier import CellType
 
 if TYPE_CHECKING:
     from ..models.liberty import Cell
@@ -32,36 +31,8 @@ if TYPE_CHECKING:
 
 MAX_INPUTS = 6  # Beyond this, fall back to 'unknown' (2^6 = 64 evaluations)
 
-# Grammar path (relative to this module)
-GRAMMAR_PATH = Path(__file__).parent / "boolean.lark"
-
-
-# --- Cell Type Enum ---
-
-
-class CellType(Enum):
-    """Standard cell type classification.
-
-    Enum values represent the semantic category of a standard cell
-    based on its boolean function or sequential behavior.
-    """
-
-    INVERTER = auto()
-    BUFFER = auto()
-    AND = auto()
-    OR = auto()
-    NAND = auto()
-    NOR = auto()
-    XOR = auto()
-    XNOR = auto()
-    FLIP_FLOP = auto()
-    LATCH = auto()
-    CONSTANT = auto()
-    UNKNOWN = auto()
-
 
 # --- AST Node Classes ---
-# (Kept for API compatibility with tests that use _parse and _compute_signature)
 
 
 class ASTNode(ABC):
@@ -134,79 +105,11 @@ class XorNode(BinaryOpNode):
         return self.left.evaluate(env) ^ self.right.evaluate(env)
 
 
-# --- Lark Parser ---
-
-
-@cache
-def _get_lark_parser() -> Lark:
-    """Returns a cached Lark parser instance."""
-    return Lark.open(
-        GRAMMAR_PATH,
-        parser="lalr",
-        transformer=BooleanTransformer(),
-    )
-
-
-@v_args(inline=True)
-class BooleanTransformer(Transformer):
-    """Transforms Lark parse tree into AST nodes."""
-
-    def var_expr(self, name, *postfix_nots):
-        """Variable with optional postfix negations."""
-        node: ASTNode = VarNode(str(name))
-        for _ in postfix_nots:
-            node = NotNode(node)
-        return node
-
-    def paren_expr(self, expr, *postfix_nots):
-        """Parenthesized expression with optional postfix negations."""
-        node = expr
-        for _ in postfix_nots:
-            node = NotNode(node)
-        return node
-
-    def not_expr(self, _, child):
-        """Prefix NOT expression. First arg is the '!' token."""
-        return NotNode(child)
-
-    def expr(self, *args):
-        """OR expression (lowest precedence)."""
-        # Filter out operator tokens (Token objects), keep only AST nodes
-        nodes = [a for a in args if isinstance(a, ASTNode)]
-        result = nodes[0]
-        for node in nodes[1:]:
-            result = OrNode(result, node)
-        return result
-
-    def xor_term(self, *args):
-        """XOR expression."""
-        nodes = [a for a in args if isinstance(a, ASTNode)]
-        result = nodes[0]
-        for node in nodes[1:]:
-            result = XorNode(result, node)
-        return result
-
-    def term(self, *args):
-        """AND expression (higher precedence than XOR)."""
-        nodes = [a for a in args if isinstance(a, ASTNode)]
-        result = nodes[0]
-        for node in nodes[1:]:
-            result = AndNode(result, node)
-        return result
-
-    def postfix(self):
-        """Postfix marker - just a placeholder for the ' character."""
-        return None
-
-
-# --- Tokenizer (for API compatibility with tests) ---
+# --- Tokenizer ---
 
 
 def _tokenize(func: str) -> list[str]:
     """Convert a function string to a list of tokens.
-
-    This function is provided for API compatibility with the legacy parser.
-    The Lark parser handles tokenization internally, but tests may use this.
 
     Handles operators: ! ~ (NOT), & * (AND), | + (OR), ^ (XOR), ( )
     Also handles postfix negation: A' → becomes ['A', "!'"]
@@ -228,6 +131,7 @@ def _tokenize(func: str) -> list[str]:
             i += 1
         elif c == "'":
             # Postfix negation: apply NOT to previous token/expression
+            # We'll handle this as a special marker
             tokens.append("!'")
             i += 1
         elif c.isalnum() or c == "_":
@@ -244,7 +148,14 @@ def _tokenize(func: str) -> list[str]:
     return tokens
 
 
-# --- Parser (for API compatibility with tests) ---
+# --- Recursive Descent Parser ---
+#
+# Grammar (with correct operator precedence):
+#   expr      = xor_term (('|' | '+') xor_term)*
+#   xor_term  = term ('^' term)*
+#   term      = factor (('&' | '*') factor)*
+#   factor    = '!' factor | primary ("!'")*
+#   primary   = '(' expr ')' | VAR
 
 
 class ParseError(Exception):
@@ -252,24 +163,89 @@ class ParseError(Exception):
 
 
 def _parse(tokens: list[str]) -> ASTNode:
-    """Parse tokens into an AST.
+    """Parse tokens into an AST."""
+    pos = [0]  # Mutable position counter
 
-    This function is provided for API compatibility with tests.
-    Internally uses the Lark parser.
-    """
-    # Reconstruct the expression from tokens
-    expr = ""
-    for tok in tokens:
-        if tok == "!'":
-            expr += "'"
+    def peek() -> str | None:
+        if pos[0] < len(tokens):
+            return tokens[pos[0]]
+        return None
+
+    def consume() -> str:
+        token = tokens[pos[0]]
+        pos[0] += 1
+        return token
+
+    def parse_expr() -> ASTNode:
+        """expr = xor_term (('|' | '+') xor_term)*"""
+        left = parse_xor_term()
+        while peek() in ("|", "+"):
+            consume()
+            right = parse_xor_term()
+            left = OrNode(left, right)
+        return left
+
+    def parse_xor_term() -> ASTNode:
+        """xor_term = term ('^' term)*"""
+        left = parse_term()
+        while peek() == "^":
+            consume()
+            right = parse_term()
+            left = XorNode(left, right)
+        return left
+
+    def parse_term() -> ASTNode:
+        """term = factor (('&' | '*') factor)*"""
+        left = parse_factor()
+        while peek() in ("&", "*"):
+            consume()
+            right = parse_factor()
+            left = AndNode(left, right)
+        return left
+
+    def parse_factor() -> ASTNode:
+        """factor = '!' factor | primary ("!'")*"""
+        if peek() == "!":
+            consume()
+            return NotNode(parse_factor())
+        return parse_primary()
+
+    def parse_primary() -> ASTNode:
+        """primary = '(' expr ')' | VAR, with optional postfix negation"""
+        token = peek()
+
+        if token == "(":
+            consume()  # '('
+            node = parse_expr()
+            if peek() == ")":
+                consume()  # ')'
+            # Handle postfix negation on parenthesized expression
+            while peek() == "!'":
+                consume()
+                node = NotNode(node)
+            return node
+        elif token is not None and token not in "!&*|+^()":
+            consume()
+            node: ASTNode = VarNode(token)
+            # Handle postfix negation: A' → NOT(A)
+            while peek() == "!'":
+                consume()
+                node = NotNode(node)
+            return node
         else:
-            expr += tok
+            raise ParseError(f"Unexpected token: {token}")
 
-    try:
-        parser = _get_lark_parser()
-        return parser.parse(expr)
-    except Exception as e:
-        raise ParseError(f"Parse error: {e}") from e
+    if not tokens:
+        raise ParseError("Empty expression")
+
+    result = parse_expr()
+
+    # Handle any remaining postfix negations
+    while peek() == "!'":
+        consume()
+        result = NotNode(result)
+
+    return result
 
 
 # --- Truth Table Evaluation ---
@@ -362,7 +338,7 @@ def _lookup_signature(sig: tuple[int, ...]) -> CellType:
 def classify_function(func: str) -> CellType:
     """Classify a boolean function string by semantic analysis.
 
-    Parses the function into an AST using Lark, evaluates its truth table,
+    Parses the function into an AST, evaluates its truth table,
     and looks up the signature to determine the gate type.
 
     Args:
@@ -376,12 +352,15 @@ def classify_function(func: str) -> CellType:
         return CellType.UNKNOWN
 
     try:
-        parser = _get_lark_parser()
-        ast = parser.parse(func)
+        tokens = _tokenize(func)
+        if not tokens:
+            return CellType.UNKNOWN
+
+        ast = _parse(tokens)
         signature = _compute_signature(ast)
         return _lookup_signature(signature)
 
-    except Exception:
+    except (ParseError, ValueError, IndexError):
         return CellType.UNKNOWN
 
 
