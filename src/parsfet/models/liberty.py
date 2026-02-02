@@ -369,6 +369,31 @@ class PowerArc(BaseModel):
     rise_power: Optional[LookupTable] = None
     fall_power: Optional[LookupTable] = None
 
+    def linear_power_model(self, slew: float) -> tuple[float, float, float]:
+        """Extracts a linear power model: E = E0 + k * Load.
+
+        Averages the linear models derived from the rise_power and fall_power tables.
+
+        Args:
+            slew: The input slew value for model extraction.
+
+        Returns:
+            A tuple (internal_energy, switching_slope, r_squared).
+        """
+        models = []
+        if self.rise_power:
+            models.append(self.rise_power.fit_linear_model(slew))
+        if self.fall_power:
+            models.append(self.fall_power.fit_linear_model(slew))
+
+        if not models:
+            return (0.0, 0.0, 1.0)
+
+        avg_d0 = sum(m[0] for m in models) / len(models)
+        avg_k = sum(m[1] for m in models) / len(models)
+        avg_r2 = sum(m[2] for m in models) / len(models)
+        return (avg_d0, avg_k, avg_r2)
+
     model_config = {"extra": "allow"}
 
 
@@ -493,6 +518,43 @@ class Cell(BaseModel):
         # Use slowest arc (max D₀) for conservative estimate
         slowest = max(models, key=lambda m: m[0])
         return slowest
+
+    def linear_power_model(self, slew: float) -> tuple[float, float, float]:
+        """Extracts a linear power model from the cell.
+
+        Uses independent worst-case extraction for E0 and k across all power arcs.
+        This ensures a strictly conservative estimate:
+        - E0_cell = max(E0_arc) for all arcs
+        - k_cell = max(k_arc) for all arcs
+
+        Args:
+            slew: Input slew for model extraction.
+
+        Returns:
+            A tuple (max_internal_energy, max_switching_slope, min_r_squared).
+        """
+        if not self.power_arcs:
+            return (0.0, 0.0, 1.0)
+
+        e0_values = []
+        k_values = []
+        r2_values = []
+
+        for arc in self.power_arcs:
+            e0, k, r2 = arc.linear_power_model(slew)
+            e0_values.append(e0)
+            k_values.append(k)
+            r2_values.append(r2)
+
+        if not e0_values:
+             return (0.0, 0.0, 1.0)
+
+        max_e0 = max(e0_values)
+        max_k = max(k_values)
+        # Use min R2 to represent the worst fit quality among the contributing arcs
+        min_r2 = min(r2_values) if r2_values else 1.0
+
+        return (max_e0, max_k, min_r2)
 
     model_config = {"extra": "allow"}
 
