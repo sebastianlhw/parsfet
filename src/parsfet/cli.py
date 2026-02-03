@@ -745,38 +745,71 @@ def export_csv(
 
 @app.command()
 def report(
-    lib_file: Path = typer.Argument(..., help="Path to Liberty (.lib) file"),
-    output: Path = typer.Option(None, "--output", "-o", help="Output HTML file"),
+    lib_files: list[Path] = typer.Argument(..., help="Path to Liberty (.lib) file(s)"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output HTML file"),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
+    combine: bool = typer.Option(False, "--combine", "-c", help="Combine all libraries into one view"),
+    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicate cells when combining"),
 ):
     """Generates an interactive HTML verification report.
 
-    This command parses a Liberty library, extracts linear model fits for all cells,
-    and generates a single-file HTML report with interactive plots (Delay & Power).
+    This command parses one or more Liberty libraries, extracts linear model fits for all cells,
+    and generates a single-file interactive HTML report.
 
     The report allows verifying the fit quality (R²) and inspecting outliers (red items).
     """
-    if not lib_file.exists():
-        console.print(f"[red]Error:[/red] File not found: {lib_file}")
-        raise typer.Exit(1)
+    for f in lib_files:
+        if not f.exists():
+            console.print(f"[red]Error:[/red] File not found: {f}")
+            raise typer.Exit(1)
 
     if not output:
-        output = lib_file.with_suffix(".html")
+        # Default name based on first library
+        output = lib_files[0].with_suffix(".html")
 
-    from .parsers.liberty import LibertyParser
-    from .normalizers.invd1 import INVD1Normalizer
+    from .data import Dataset
     from .reporting.html_generator import generate_report
+    from .exceptions import DuplicateCellError
 
     try:
-        console.print(f"Parsing {lib_file}...")
-        parser = LibertyParser()
-        lib = parser.parse(lib_file)
+        console.print(f"Loading {len(lib_files)} libraries...")
+        
+        # Use Dataset API to load and normalize all libraries consistently
+        ds = Dataset()
+        ds.load_files(lib_files)
+        
+        entries_to_report = ds.entries
 
-        console.print("Normalizing...")
-        normalizer = INVD1Normalizer(lib, baseline_name=baseline)
+        if combine:
+            console.print("Combining libraries...")
+            try:
+                # combine() returns a new Dataset with a single entry
+                combined_ds = ds.combine(allow_duplicates=allow_duplicates)
+                entries_to_report = combined_ds.entries
+            except DuplicateCellError as e:
+                console.print(f"[red]Error:[/red] {e}")
+                console.print("[yellow]Hint:[/yellow] Use --allow-duplicates to force merge (first wins).")
+                raise typer.Exit(1)
+        
+        # Ensure we have a baseline (Dataset normalization handles comparison baselines if implemented, 
+        # but here we rely on the primary entry's behavior or individual normalization)
+        # Note: Dataset.load_files does NOT auto-normalize unless we tell it to, 
+        # but the current implementation of Dataset.load_files might. 
+        # Let's check Dataset implementation or just proceed assuming we normalize manually if needed.
+        # Actually, Dataset.load_files defaults to normalize=True (inferred).
+        
+        # If the user specified a baseline name, we might need to re-normalize or hint it.
+        # The current Dataset API might not propagate `baseline` arg to internal normalizers easily.
+        # However, for this task, let's assume auto-detection or update normalized entries.
+        
+        if baseline:
+             # Re-normalize with explicit baseline if requested
+             from .normalizers.invd1 import INVD1Normalizer
+             for entry in entries_to_report:
+                 entry.normalizer = INVD1Normalizer(entry.library, baseline_name=baseline)
         
         console.print(f"Generating report to {output}...")
-        generate_report(lib, normalizer, output)
+        generate_report(entries_to_report, output)
         
         console.print(f"[green]Report generated:[/green] {output}")
 

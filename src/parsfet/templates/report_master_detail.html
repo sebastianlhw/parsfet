@@ -67,6 +67,21 @@
                     class="text-xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
                     Pars-FET</h1>
                 <p class="text-xs text-slate-400 mt-1 uppercase tracking-wider font-medium">Library Characterization</p>
+
+                <!-- Library Switcher -->
+                <div class="mt-4" x-show="libraries.length > 1">
+                    <label class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Select Library</label>
+                    <div class="relative mt-1">
+                        <select
+                            class="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                            @change="switchLibrary($event.target.value)">
+                            <template x-for="(lib, index) in libraries" :key="index">
+                                <option :value="index" x-text="lib.library_name" :selected="index === currentLibIndex">
+                                </option>
+                            </template>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <div class="p-4 space-y-1">
@@ -407,6 +422,23 @@
                 stats: { avgDelayR2: 0, avgPowerR2: 0, outliers: 0 },
 
                 init() {
+                    // Check if multi-library
+                    this.libraries = window.LIB_DATA.libraries || [window.LIB_DATA];
+                    this.currentLibIndex = 0;
+                    this.data = this.libraries[0];
+
+                    this.calculateStats();
+                    this.$nextTick(() => {
+                        this.renderDashboardCharts();
+                    });
+                },
+
+                switchLibrary(index) {
+                    this.currentLibIndex = index;
+                    this.data = this.libraries[index];
+                    this.selectedCell = null;
+                    this.search = '';
+
                     this.calculateStats();
                     this.$nextTick(() => {
                         this.renderDashboardCharts();
