@@ -1,6 +1,6 @@
 # Pars-FET 🌿🍨
 
-<img src="docs/source/_static/logo.png" width="640">
+<img src="docs/source/_static/logo.png" width="240">
 
 The *parfait* way to parse technology input files into structured data.
 A Python-based framework for parsing semiconductor technology files (`.lib`, `.lef`) enabling cross-process comparison, visualization, and ML benchmarking.
