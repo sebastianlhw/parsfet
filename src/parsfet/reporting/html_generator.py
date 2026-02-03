@@ -15,18 +15,11 @@ def interpolate_1d_at_slew(table, target_slew):
     if not table or not table.values:
         return None, None
         
-    # Check if table is 1D (no load axis)
-    if not table.index_2 or not table.is_2d:
-        # Cannot plot Delay vs Load if there is no load dependency
-        return None, None
-
     slew_axis = np.array(table.index_1)
-    # Ensure values is 2D for slicing
-    values = np.array(table.values)
+    values = np.array(table.values) # Ensure 2D
     if len(values.shape) == 1:
-        # Should not happen if is_2d check passed, but defensive programming
-        return None, None
-    
+         return None, None
+
     idx = np.searchsorted(slew_axis, target_slew)
     
     if idx == 0:
@@ -41,6 +34,50 @@ def interpolate_1d_at_slew(table, target_slew):
         
     # JSON serialization requires native lists/floats, not numpy types
     return list(table.index_2), [float(v) for v in y_values]
+
+def interpolate_1d_at_load(table, target_load):
+    """Interpolates a 2D table to get Output Slew vs Input Slew at fixed Load.
+    Returns: (input_slews_list, output_slews_list)
+    """
+    if not table or not table.values:
+        return None, None
+        
+    # Check if table is 2D
+    if not table.index_2 or not table.is_2d:
+        return None, None
+        
+    load_axis = np.array(table.index_2)
+    slew_axis = np.array(table.index_1)
+    values = np.array(table.values) # Shape: (num_slews, num_loads)
+    if len(values.shape) == 1:
+        return None, None
+    
+    idx = np.searchsorted(load_axis, target_load)
+    
+    output_slews = []
+    
+    # Calculate weights once since load is constant
+    if idx == 0:
+        w1, w0 = 0.0, 1.0
+        c_idx = 0
+    elif idx >= len(load_axis):
+        w1, w0 = 0.0, 1.0 # Clamp to end
+        c_idx = len(load_axis) - 1
+    else:
+        l0, l1 = load_axis[idx-1], load_axis[idx]
+        w1 = (target_load - l0) / (l1 - l0)
+        w0 = 1.0 - w1
+        c_idx = idx
+        
+    for r in range(len(slew_axis)):
+        row_vals = values[r, :]
+        if idx == 0 or idx >= len(load_axis):
+            val = row_vals[c_idx]
+        else:
+            val = w0 * row_vals[idx-1] + w1 * row_vals[idx]
+        output_slews.append(val)
+        
+    return list(table.index_1), output_slews
 
 def generate_report(entries: list[Any], output_path: Path):
     """Generates the interactive HTML report for one or more libraries.
@@ -150,29 +187,69 @@ def generate_report(entries: list[Any], output_path: Path):
         # Extract Baseline LUT (Transition) for Methodology Chart
         baseline_lut = None
         if normalizer.baseline_cell and hasattr(normalizer.baseline_cell, 'timing_arcs'):
-            # Find the first arc with a transition table
+            # Find the first arc with ANY transition table
+            target_arc = None
             for arc in normalizer.baseline_cell.timing_arcs:
-                table = arc.rise_transition or arc.fall_transition
-                if table and table.values:
-                    # Normalize units to canonical (ns, pF)
-                    norm = library.unit_normalizer
-                    input_slews = [norm.normalize_time(v) for v in table.index_1]
-                    loads = [norm.normalize_capacitance(v) for v in table.index_2]
-                    # Ensure values is 2D before processing
-                    raw_values = np.array(table.values)
-                    if len(raw_values.shape) == 1:
-                         # Skip 1D tables for methodology visualization (need 2D surface)
-                         pass
-                    else:
-                        values = [[norm.normalize_time(v) for v in row] for row in table.values]
+                if (arc.rise_transition and arc.rise_transition.values) or \
+                   (arc.fall_transition and arc.fall_transition.values):
+                    target_arc = arc
+                    break
+            
+            if target_arc:
+                # Get the PRIMARY table for the main visualization (usually Rise)
+                primary_table = target_arc.rise_transition or target_arc.fall_transition
+                
+                # Normalize units to canonical (ns, pF)
+                norm = library.unit_normalizer
+                input_slews = [norm.normalize_time(v) for v in primary_table.index_1]
+                loads = [norm.normalize_capacitance(v) for v in primary_table.index_2]
+                values = [[norm.normalize_time(v) for v in row] for row in primary_table.values]
 
-                        baseline_lut = {
-                            "name": f"{arc.related_pin} -> {normalizer.baseline.cell_name} ({'Rise' if arc.rise_transition else 'Fall'} Trans)",
-                            "input_slews": input_slews,
-                            "loads": loads,
-                            "values": values
-                        }
-                        break
+                # --- Calculate Convergence Curve (S_out vs S_in) at FO4 Load ---
+                # CRITICAL: The FO4 point is derived from the AVERAGE of Rise and Fall transitions.
+                # To make the chart accurate, we must plot the AVERAGE transfer curve.
+                
+                raw_fo4_load = normalizer.fo4_load # Raw unit
+                
+                # Get Rise Curve (if exists)
+                rise_in, rise_out = [], []
+                if target_arc.rise_transition:
+                    rise_in, rise_out = interpolate_1d_at_load(target_arc.rise_transition, raw_fo4_load)
+                
+                # Get Fall Curve (if exists)
+                fall_in, fall_out = [], []
+                if target_arc.fall_transition:
+                    fall_in, fall_out = interpolate_1d_at_load(target_arc.fall_transition, raw_fo4_load)
+                
+                # Calculate Average Curve
+                avg_out = []
+                avg_in = rise_in if rise_in else fall_in # Assuming generic axis is same
+                
+                if rise_out and fall_out:
+                    # element-wise average
+                    avg_out = [(r + f) / 2.0 for r, f in zip(rise_out, fall_out)]
+                elif rise_out:
+                    avg_out = rise_out
+                elif fall_out:
+                    avg_out = fall_out
+                
+                # Normalize Convergence Data
+                if avg_in:
+                    conv_in = [norm.normalize_time(v) for v in avg_in]
+                    conv_out = [norm.normalize_time(v) for v in avg_out]
+                else:
+                    conv_in, conv_out = [], []
+
+                baseline_lut = {
+                    "name": f"{target_arc.related_pin} -> {normalizer.baseline.cell_name} (Average Trans)",
+                    "input_slews": input_slews,
+                    "loads": loads,
+                    "values": values, # Still showing the primary surface in the "Matrix", which is fine
+                    "convergence": {
+                        "input_slew": conv_in,
+                        "output_slew": conv_out
+                    }
+                }
         
         libraries_data.append({
             "library_name": library.name,
@@ -187,11 +264,15 @@ def generate_report(entries: list[Any], output_path: Path):
     # Wrap in "libraries" array. 
     # For backward compatibility with the template (if unchanged), we select the FIRST library as primary 'data',
     # but we ALSO provide 'libraries' for the multi-lib switcher.
-    payload = {
-        # Primary view (first library) - keeps existing template working initially
-        **libraries_data[0], 
-        "libraries": libraries_data
-    }
+    if not libraries_data:
+        # Fallback empty payload
+        payload = {"libraries": [], "cells": []}
+    else:
+        payload = {
+            # Primary view (first library) - keeps existing template working initially
+            **libraries_data[0], 
+            "libraries": libraries_data
+        }
     
     # 2. Render Template
     template_path = Path(__file__).parent.parent / "templates" / "report_master_detail.html"

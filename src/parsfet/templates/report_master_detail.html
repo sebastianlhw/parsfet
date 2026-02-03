@@ -526,39 +526,52 @@
 
                 renderLUTChart() {
                     const lut = this.data.baseline_lut;
-                    if (!lut) return;
+                    if (!lut || !lut.convergence) return;
 
-                    const traces = [];
-                    // Plot curves for each input slew
-                    lut.input_slews.forEach((slew, i) => {
-                        traces.push({
-                            x: lut.loads,
-                            y: lut.values[i],
-                            mode: 'lines',
-                            name: `In Slew=${slew.toExponential(1)}`,
-                            line: { width: 1, color: '#94a3b8' },
-                            showlegend: false,
-                            hoverinfo: 'none'
-                        });
-                    });
+                    const inputSlews = lut.convergence.input_slew;
+                    const outputSlews = lut.convergence.output_slew;
+                    
+                    // 1. Determine Plot Range
+                    const maxSlew = Math.max(
+                        Math.max(...inputSlews), 
+                        Math.max(...outputSlews)
+                    ) * 1.1;
 
-                    // Highlight FO4 Point
-                    const targetLoad = this.data.baseline.input_cap * 4;
+                    // 2. Identity Line (y = x)
+                    const traceIdentity = {
+                        x: [0, maxSlew],
+                        y: [0, maxSlew],
+                        mode: 'lines',
+                        name: 'Steady State (Sin=Sout)',
+                        line: { color: '#cbd5e1', dash: 'dash' }
+                    };
+
+                    // 3. Transfer Curve (Sout vs Sin at constant FO4 Load)
+                    const traceTransfer = {
+                        x: inputSlews,
+                        y: outputSlews,
+                        mode: 'lines+markers',
+                        name: 'Output Slew @ FO4 Load',
+                        line: { color: '#3b82f6', width: 3 },
+                        marker: { size: 6 }
+                    };
+
+                    // 4. Highlight Intersection (FO4 Point)
                     const targetSlew = this.data.baseline.fo4_slew;
-
-                    traces.push({
-                        x: [targetLoad],
+                    const traceIntersection = {
+                        x: [targetSlew],
                         y: [targetSlew],
                         mode: 'markers',
                         name: 'FO4 Point',
-                        marker: { size: 12, color: '#10b981', symbol: 'cross' }
-                    });
+                        marker: { size: 12, color: '#10b981', symbol: 'cross', line: { color: 'white', width: 2 } }
+                    };
 
-                    Plotly.newPlot('chart-lut', traces, {
-                        margin: { t: 20, b: 40, l: 40, r: 10 },
-                        xaxis: { title: 'Output Load (pF)', range: [0, Math.max(...lut.loads) * 0.5] }, // Zoom in a bit
-                        yaxis: { title: 'Output Slew (ns)' },
-                        showlegend: false
+                    Plotly.newPlot('chart-lut', [traceIdentity, traceTransfer, traceIntersection], {
+                        margin: { t: 30, b: 40, l: 50, r: 20 },
+                        xaxis: { title: 'Input Slew (ns)', range: [0, maxSlew] },
+                        yaxis: { title: 'Output Slew (ns)', range: [0, maxSlew] },
+                        showlegend: true,
+                        legend: { orientation: 'h', y: -0.2 }
                     }, { displayModeBar: false });
                 },
 
