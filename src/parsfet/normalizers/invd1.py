@@ -50,6 +50,8 @@ class NormalizedMetrics:
     area_ratio: float = 1.0  # cell_area / invd1_area
     d0_ratio: float = 1.0  # cell.D₀ / invd1.D₀ (intrinsic delay ratio)
     k_ratio: float = 1.0  # cell.k / invd1.k (load slope ratio)
+    e0_ratio: float = 1.0 # cell.E₀ / invd1.E₀ (intrinsic energy ratio)
+    k_power_ratio: float = 1.0 # cell.k_power / invd1.k_power (energy slope ratio)
     leakage_ratio: float = 1.0  # cell_leakage / invd1_leakage
     input_cap_ratio: float = 1.0  # input_cap / invd1_input_cap
 
@@ -65,10 +67,13 @@ class NormalizedMetrics:
     raw_k_ns_per_pf: float = 0.0  # Load slope
     raw_leakage: float = 0.0
     raw_input_cap: float = 0.0
+    raw_e0_unit: float = 0.0  # Internal energy
+    raw_k_unit_per_pf: float = 0.0  # Switching energy slope (unit/pF)
 
     # Fit quality metrics
     fit_r_squared: float = 1.0  # R² of linear fit (1.0 = perfect)
     fit_residual_pct: float = 0.0  # Signed residual at FO4 (%, positive = pessimistic)
+    power_fit_r_squared: float = 1.0 # R² of power model fit
 
     def to_dict(self) -> dict:
         """Converts the normalized metrics to a dictionary for JSON serialization."""
@@ -78,15 +83,25 @@ class NormalizedMetrics:
             "area_ratio": self.area_ratio,
             "d0_ratio": self.d0_ratio,
             "k_ratio": self.k_ratio,
+            "e0_ratio": self.e0_ratio,
+            "k_power_ratio": self.k_power_ratio,
             "leakage_ratio": self.leakage_ratio,
             "input_cap_ratio": self.input_cap_ratio,
             "delay_model": {
                 "d0_ns": self.raw_d0_ns,
                 "k_ns_per_pf": self.raw_k_ns_per_pf,
             },
-            "fit_quality": {
+            "power_model": {
+                "e0_unit": self.raw_e0_unit,
+                "k_unit_per_pf": self.raw_k_unit_per_pf,
+            },
+            "delay_fit_quality": {
                 "r_squared": self.fit_r_squared,
                 "fo4_residual_pct": self.fit_residual_pct,
+            },
+            "power_fit_quality": {
+                "r_squared": self.power_fit_r_squared,
+                "fo4_residual_pct": 0.0,
             },
             "drive_strength": self.drive_strength,
             "num_inputs": self.num_inputs,
@@ -98,6 +113,8 @@ class NormalizedMetrics:
                 "k_ns_per_pf": self.raw_k_ns_per_pf,
                 "leakage": self.raw_leakage,
                 "input_cap_pf": self.raw_input_cap,
+                "e0_unit": self.raw_e0_unit,
+                "k_unit_per_pf": self.raw_k_unit_per_pf,
             },
         }
 
@@ -131,6 +148,9 @@ class NormalizedMetrics:
             ExportedCell,
             ExportedDelayModel,
             ExportedFitQuality,
+            ExportedDelayModel,
+            ExportedFitQuality,
+            ExportedPowerModel,
             ExportedRawMetrics,
         )
 
@@ -150,9 +170,17 @@ class NormalizedMetrics:
                 d0_ns=self.raw_d0_ns,
                 k_ns_per_pf=self.raw_k_ns_per_pf,
             ),
-            fit_quality=ExportedFitQuality(
+            power_model=ExportedPowerModel(
+                e0_unit=self.raw_e0_unit,
+                k_unit_per_pf=self.raw_k_unit_per_pf,
+            ),
+            delay_fit_quality=ExportedFitQuality(
                 r_squared=self.fit_r_squared,
                 fo4_residual_pct=self.fit_residual_pct,
+            ),
+            power_fit_quality=ExportedFitQuality(
+                r_squared=self.power_fit_r_squared,
+                fo4_residual_pct=0.0,
             ),
             raw=ExportedRawMetrics(
                 area_um2=self.raw_area,
@@ -160,6 +188,8 @@ class NormalizedMetrics:
                 k_ns_per_pf=self.raw_k_ns_per_pf,
                 leakage=self.raw_leakage,
                 input_cap_pf=self.raw_input_cap,
+                e0_unit=self.raw_e0_unit,
+                k_unit_per_pf=self.raw_k_unit_per_pf,
             ),
         )
 
@@ -178,6 +208,9 @@ class BaselineMetrics:
     k: float  # k: load slope in ns/pF
     leakage: float
     input_cap: float  # Total input capacitance
+    # Power model
+    e0: float = 0.0 # Intrinsic energy
+    k_power: float = 0.0 # Switching energy slope
     # FO4 operating point
     fo4_slew: float = 0.0
     fo4_load: float = 0.0
@@ -272,6 +305,9 @@ class INVD1Normalizer:
         fo4_slew_ns = self.unit_normalizer.normalize_time(self.fo4_slew)
         fo4_load_pf = self.unit_normalizer.normalize_capacitance(self.fo4_load)
 
+        # Power model extraction for baseline
+        e0_raw, k_p_raw, _ = cell.linear_power_model(self.fo4_slew)
+        
         return BaselineMetrics(
             cell_name=cell.name,
             area=area,
@@ -279,6 +315,8 @@ class INVD1Normalizer:
             k=k,
             leakage=leakage,
             input_cap=input_cap,
+            e0=e0_raw,
+            k_power=k_p_raw,
             fo4_slew=fo4_slew_ns,
             fo4_load=fo4_load_pf,
         )
@@ -322,6 +360,12 @@ class INVD1Normalizer:
             else 0.0
         )
 
+        # Extract linear power model: E = E0 + k * Load
+        e0_raw, k_p_raw, p_r2 = cell.linear_power_model(self.fo4_slew)
+        
+        raw_e0 = e0_raw
+        raw_k_unit_per_pf = k_p_raw
+
         raw_leakage = cell.cell_leakage_power if cell.cell_leakage_power else 0.0
 
         # Convert capacitance to pF
@@ -350,6 +394,12 @@ class INVD1Normalizer:
         input_cap_ratio = (
             raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0
         )
+        e0_ratio = raw_e0 / self.baseline.e0 if self.baseline.e0 > 0 and raw_e0 > 0 else 1.0
+        k_power_ratio = (
+            raw_k_unit_per_pf / self.baseline.k_power
+            if self.baseline.k_power > 0 and raw_k_unit_per_pf > 0
+            else 1.0
+        )
 
         # Estimate drive strength from area (larger cell = more drive)
         drive_strength = area_ratio if area_ratio > 0 else 1.0
@@ -360,6 +410,8 @@ class INVD1Normalizer:
             area_ratio=area_ratio,
             d0_ratio=d0_ratio,
             k_ratio=k_ratio,
+            e0_ratio=e0_ratio,
+            k_power_ratio=k_power_ratio,
             leakage_ratio=leakage_ratio,
             input_cap_ratio=input_cap_ratio,
             drive_strength=drive_strength,
@@ -371,8 +423,11 @@ class INVD1Normalizer:
             raw_k_ns_per_pf=raw_k_ns_per_pf,
             raw_leakage=raw_leakage,
             raw_input_cap=raw_input_cap,
+            raw_e0_unit=raw_e0,
+            raw_k_unit_per_pf=raw_k_unit_per_pf,
             fit_r_squared=fit_r2,
             fit_residual_pct=fit_residual_pct,
+            power_fit_r_squared=p_r2,
         )
 
     def normalize_all(self) -> dict[str, NormalizedMetrics]:
@@ -391,6 +446,8 @@ class INVD1Normalizer:
         raw_k_ns_per_pf: float,
         raw_leakage: float,
         raw_input_cap: float,
+        raw_e0_unit: float = 0.0,
+        raw_k_unit_per_pf: float = 0.0,
         cell_type_str: str = "unknown",
         num_inputs: int = 1,
         num_outputs: int = 1,
@@ -434,6 +491,12 @@ class INVD1Normalizer:
         input_cap_ratio = (
             raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0
         )
+        e0_ratio = raw_e0_unit / self.baseline.e0 if self.baseline.e0 > 0 and raw_e0_unit > 0 else 1.0
+        k_power_ratio = (
+             raw_k_unit_per_pf / self.baseline.k_power
+            if self.baseline.k_power > 0 and raw_k_unit_per_pf > 0
+            else 1.0
+        )
 
         drive_strength = area_ratio if area_ratio > 0 else 1.0
 
@@ -443,6 +506,8 @@ class INVD1Normalizer:
             area_ratio=area_ratio,
             d0_ratio=d0_ratio,
             k_ratio=k_ratio,
+            e0_ratio=e0_ratio,
+            k_power_ratio=k_power_ratio,
             leakage_ratio=leakage_ratio,
             input_cap_ratio=input_cap_ratio,
             drive_strength=drive_strength,
@@ -454,8 +519,11 @@ class INVD1Normalizer:
             raw_k_ns_per_pf=raw_k_ns_per_pf,
             raw_leakage=raw_leakage,
             raw_input_cap=raw_input_cap,
+            raw_e0_unit=raw_e0_unit,
+            raw_k_unit_per_pf=raw_k_unit_per_pf,
             fit_r_squared=1.0,  # No fit data available from raw
             fit_residual_pct=0.0,
+            power_fit_r_squared=1.0, 
         )
 
     def get_summary(self) -> dict:
@@ -544,6 +612,8 @@ class INVD1Normalizer:
                 "k_ns_per_pf": self.baseline.k,
                 "leakage": self.baseline.leakage,
                 "input_cap_pf": self.baseline.input_cap,
+                "e0_unit": self.baseline.e0,
+                "k_unit_per_pf": self.baseline.k_power,
             },
             "cells": {name: m.to_dict() for name, m in self.normalize_all().items()},
             "summary": self.get_summary(),

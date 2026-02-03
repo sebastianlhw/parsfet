@@ -19,6 +19,8 @@ class ExportedRawMetrics(BaseModel):
     k_ns_per_pf: float = Field(default=0.0, description="Load slope in ns/pF")
     leakage: float = Field(default=0.0, description="Leakage power")
     input_cap_pf: float = Field(default=0.0, description="Input capacitance in pF")
+    e0_unit: float = Field(default=0.0, description="Intrinsic energy (unit)")
+    k_unit_per_pf: float = Field(default=0.0, description="Switching energy slope (unit/pF)")
 
 
 class ExportedDelayModel(BaseModel):
@@ -26,6 +28,21 @@ class ExportedDelayModel(BaseModel):
 
     d0_ns: float = Field(default=0.0, description="Intrinsic delay in ns")
     k_ns_per_pf: float = Field(default=0.0, description="Load slope in ns/pF")
+
+
+class ExportedPowerModel(BaseModel):
+    """Linear power (energy) model parameters derived from rise_power/fall_power tables.
+
+    Energy = internal_energy + switching_energy_slope * Load
+    """
+
+    e0_unit: float = Field(
+        default=0.0, description="Intrinsic energy (E0) - 'Internal Power' component"
+    )
+    k_unit_per_pf: float = Field(
+        default=0.0,
+        description="Energy slope per load (k) - 'Switching Power' component",
+    )
 
 
 class ExportedFitQuality(BaseModel):
@@ -56,7 +73,9 @@ class ExportedCell(BaseModel):
 
     # Nested structures
     delay_model: Optional[ExportedDelayModel] = None
-    fit_quality: Optional[ExportedFitQuality] = None
+    delay_fit_quality: Optional[ExportedFitQuality] = None
+    power_model: Optional[ExportedPowerModel] = None
+    power_fit_quality: Optional[ExportedFitQuality] = None
     raw: Optional[ExportedRawMetrics] = None
 
     # Physical data (from LEF, if present)
@@ -74,6 +93,8 @@ class ExportedBaseline(BaseModel):
     k_ns_per_pf: float = Field(default=0.0, description="Baseline k in ns/pF")
     leakage: float = Field(default=0.0, description="Baseline leakage power")
     input_cap_pf: float = Field(default=0.0, description="Baseline input cap in pF")
+    e0_unit: float = Field(default=0.0, description="Baseline E0 (unit)")
+    k_unit_per_pf: float = Field(default=0.0, description="Baseline k (unit/pF)")
 
 
 class ExportedFO4(BaseModel):

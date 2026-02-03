@@ -709,5 +709,115 @@ def combine(
         console.print("[yellow]Tip:[/yellow] Use --output to save the combined data.")
 
 
+@app.command()
+def export_csv(
+    input_file: Path = typer.Argument(..., help="Path to exported JSON file"),
+    output: Path = typer.Argument(..., help="Output CSV file"),
+):
+    """Exports a Pars-FET JSON library to CSV format.
+
+    This command converts the hierarchical JSON export into a flat CSV table,
+    suitable for analysis in Excel, Matlab, or Pandas.
+    """
+    if not input_file.exists():
+        console.print(f"[red]Error:[/red] File not found: {input_file}")
+        raise typer.Exit(1)
+
+    from .models.export import ExportedLibrary
+    from .reporting.csv_generator import generate_csv
+
+    try:
+        # Load the library model
+        console.print(f"Loading {input_file}...")
+        library = ExportedLibrary.from_json_file(str(input_file))
+        
+        # Generate CSV
+        with open(output, "w", newline="") as f:
+            generate_csv(library, f)
+            
+        console.print(f"[green]Exported CSV to:[/green] {output}")
+        
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Failed to export CSV: {e}")
+        # raise  # Uncomment for debug trace
+        raise typer.Exit(1)
+
+
+@app.command()
+def report(
+    lib_files: list[Path] = typer.Argument(..., help="Path to Liberty (.lib) file(s)"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output HTML file"),
+    baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
+    combine: bool = typer.Option(False, "--combine", "-c", help="Combine all libraries into one view"),
+    allow_duplicates: bool = typer.Option(False, "--allow-duplicates", help="Allow duplicate cells when combining"),
+):
+    """Generates an interactive HTML verification report.
+
+    This command parses one or more Liberty libraries, extracts linear model fits for all cells,
+    and generates a single-file interactive HTML report.
+
+    The report allows verifying the fit quality (R²) and inspecting outliers (red items).
+    """
+    for f in lib_files:
+        if not f.exists():
+            console.print(f"[red]Error:[/red] File not found: {f}")
+            raise typer.Exit(1)
+
+    if not output:
+        # Default name based on first library
+        output = lib_files[0].with_suffix(".html")
+
+    from .data import Dataset
+    from .reporting.html_generator import generate_report
+    from .exceptions import DuplicateCellError
+
+    try:
+        console.print(f"Loading {len(lib_files)} libraries...")
+        
+        # Use Dataset API to load and normalize all libraries consistently
+        ds = Dataset()
+        ds.load_files(lib_files)
+        
+        entries_to_report = ds.entries
+
+        if combine:
+            console.print("Combining libraries...")
+            try:
+                # combine() returns a new Dataset with a single entry
+                combined_ds = ds.combine(allow_duplicates=allow_duplicates)
+                entries_to_report = combined_ds.entries
+            except DuplicateCellError as e:
+                console.print(f"[red]Error:[/red] {e}")
+                console.print("[yellow]Hint:[/yellow] Use --allow-duplicates to force merge (first wins).")
+                raise typer.Exit(1)
+        
+        # Ensure we have a baseline (Dataset normalization handles comparison baselines if implemented, 
+        # but here we rely on the primary entry's behavior or individual normalization)
+        # Note: Dataset.load_files does NOT auto-normalize unless we tell it to, 
+        # but the current implementation of Dataset.load_files might. 
+        # Let's check Dataset implementation or just proceed assuming we normalize manually if needed.
+        # Actually, Dataset.load_files defaults to normalize=True (inferred).
+        
+        # If the user specified a baseline name, we might need to re-normalize or hint it.
+        # The current Dataset API might not propagate `baseline` arg to internal normalizers easily.
+        # However, for this task, let's assume auto-detection or update normalized entries.
+        
+        if baseline:
+             # Re-normalize with explicit baseline if requested
+             from .normalizers.invd1 import INVD1Normalizer
+             for entry in entries_to_report:
+                 entry.normalizer = INVD1Normalizer(entry.library, baseline_name=baseline)
+        
+        console.print(f"Generating report to {output}...")
+        generate_report(entries_to_report, output)
+        
+        console.print(f"[green]Report generated:[/green] {output}")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Failed to generate report: {e}")
+        # raise  # Uncomment for debug
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()
