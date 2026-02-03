@@ -67,8 +67,8 @@ def test_cell_power_aggregation():
 def test_export_model_structure():
     """Test that ExportedCell can hold the new power model."""
     pm = ExportedPowerModel(
-        internal_energy_unit=0.5,
-        switching_energy_slope=0.01
+        e0_unit=0.5,
+        k_unit_per_pf=0.01
     )
     
     ec = ExportedCell(
@@ -77,5 +77,5 @@ def test_export_model_structure():
     )
 
     assert ec.power_model is not None
-    assert ec.power_model.internal_energy_unit == 0.5
-    assert ec.power_model.switching_energy_slope == 0.01
+    assert ec.power_model.e0_unit == 0.5
+    assert ec.power_model.k_unit_per_pf == 0.01

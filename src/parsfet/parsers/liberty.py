@@ -440,12 +440,16 @@ class LibertyParser(BaseParser[LibertyLibrary]):
         template = templates.get(template_name, {})
 
         # Parse indices
-        idx1 = self._extract_index(attrs.get("index_1")) or self._extract_index(
-            template.get("index_1")
-        )
-        idx2 = self._extract_index(attrs.get("index_2")) or self._extract_index(
-            template.get("index_2")
-        )
+        # Parse indices
+        if "index_1" in attrs:
+            idx1 = self._extract_index(attrs.get("index_1"))
+        else:
+            idx1 = self._extract_index(template.get("index_1"))
+
+        if "index_2" in attrs:
+            idx2 = self._extract_index(attrs.get("index_2"))
+        else:
+            idx2 = self._extract_index(template.get("index_2"))
 
         if idx1:
             lut.index_1 = idx1
@@ -468,6 +472,9 @@ class LibertyParser(BaseParser[LibertyLibrary]):
                     lut.values = reshaped
                 else:
                     lut.values = values
+            elif idx1 and not idx2 and len(values) == 1:
+                # 1D table - flatten the single row
+                lut.values = values[0]
             else:
                 lut.values = values
 
