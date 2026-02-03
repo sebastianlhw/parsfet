@@ -709,5 +709,82 @@ def combine(
         console.print("[yellow]Tip:[/yellow] Use --output to save the combined data.")
 
 
+@app.command()
+def export_csv(
+    input_file: Path = typer.Argument(..., help="Path to exported JSON file"),
+    output: Path = typer.Argument(..., help="Output CSV file"),
+):
+    """Exports a Pars-FET JSON library to CSV format.
+
+    This command converts the hierarchical JSON export into a flat CSV table,
+    suitable for analysis in Excel, Matlab, or Pandas.
+    """
+    if not input_file.exists():
+        console.print(f"[red]Error:[/red] File not found: {input_file}")
+        raise typer.Exit(1)
+
+    from .models.export import ExportedLibrary
+    from .reporting.csv_generator import generate_csv
+
+    try:
+        # Load the library model
+        console.print(f"Loading {input_file}...")
+        library = ExportedLibrary.from_json_file(str(input_file))
+        
+        # Generate CSV
+        with open(output, "w", newline="") as f:
+            generate_csv(library, f)
+            
+        console.print(f"[green]Exported CSV to:[/green] {output}")
+        
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Failed to export CSV: {e}")
+        # raise  # Uncomment for debug trace
+        raise typer.Exit(1)
+
+
+@app.command()
+def report(
+    lib_file: Path = typer.Argument(..., help="Path to Liberty (.lib) file"),
+    output: Path = typer.Option(None, "--output", "-o", help="Output HTML file"),
+    baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
+):
+    """Generates an interactive HTML verification report.
+
+    This command parses a Liberty library, extracts linear model fits for all cells,
+    and generates a single-file HTML report with interactive plots (Delay & Power).
+
+    The report allows verifying the fit quality (R²) and inspecting outliers (red items).
+    """
+    if not lib_file.exists():
+        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        raise typer.Exit(1)
+
+    if not output:
+        output = lib_file.with_suffix(".html")
+
+    from .parsers.liberty import LibertyParser
+    from .normalizers.invd1 import INVD1Normalizer
+    from .reporting.html_generator import generate_report
+
+    try:
+        console.print(f"Parsing {lib_file}...")
+        parser = LibertyParser()
+        lib = parser.parse(lib_file)
+
+        console.print("Normalizing...")
+        normalizer = INVD1Normalizer(lib, baseline_name=baseline)
+        
+        console.print(f"Generating report to {output}...")
+        generate_report(lib, normalizer, output)
+        
+        console.print(f"[green]Report generated:[/green] {output}")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Failed to generate report: {e}")
+        # raise  # Uncomment for debug
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

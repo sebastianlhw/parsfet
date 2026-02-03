@@ -50,6 +50,8 @@ class NormalizedMetrics:
     area_ratio: float = 1.0  # cell_area / invd1_area
     d0_ratio: float = 1.0  # cell.D₀ / invd1.D₀ (intrinsic delay ratio)
     k_ratio: float = 1.0  # cell.k / invd1.k (load slope ratio)
+    e0_ratio: float = 1.0 # cell.E₀ / invd1.E₀ (intrinsic energy ratio)
+    k_power_ratio: float = 1.0 # cell.k_power / invd1.k_power (energy slope ratio)
     leakage_ratio: float = 1.0  # cell_leakage / invd1_leakage
     input_cap_ratio: float = 1.0  # input_cap / invd1_input_cap
 
@@ -81,6 +83,8 @@ class NormalizedMetrics:
             "area_ratio": self.area_ratio,
             "d0_ratio": self.d0_ratio,
             "k_ratio": self.k_ratio,
+            "e0_ratio": self.e0_ratio,
+            "k_power_ratio": self.k_power_ratio,
             "leakage_ratio": self.leakage_ratio,
             "input_cap_ratio": self.input_cap_ratio,
             "delay_model": {
@@ -390,6 +394,12 @@ class INVD1Normalizer:
         input_cap_ratio = (
             raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0
         )
+        e0_ratio = raw_e0 / self.baseline.e0 if self.baseline.e0 > 0 and raw_e0 > 0 else 1.0
+        k_power_ratio = (
+            raw_k_unit_per_pf / self.baseline.k_power
+            if self.baseline.k_power > 0 and raw_k_unit_per_pf > 0
+            else 1.0
+        )
 
         # Estimate drive strength from area (larger cell = more drive)
         drive_strength = area_ratio if area_ratio > 0 else 1.0
@@ -400,6 +410,8 @@ class INVD1Normalizer:
             area_ratio=area_ratio,
             d0_ratio=d0_ratio,
             k_ratio=k_ratio,
+            e0_ratio=e0_ratio,
+            k_power_ratio=k_power_ratio,
             leakage_ratio=leakage_ratio,
             input_cap_ratio=input_cap_ratio,
             drive_strength=drive_strength,
@@ -479,6 +491,12 @@ class INVD1Normalizer:
         input_cap_ratio = (
             raw_input_cap / self.baseline.input_cap if self.baseline.input_cap > 0 else 0.0
         )
+        e0_ratio = raw_e0_unit / self.baseline.e0 if self.baseline.e0 > 0 and raw_e0_unit > 0 else 1.0
+        k_power_ratio = (
+             raw_k_unit_per_pf / self.baseline.k_power
+            if self.baseline.k_power > 0 and raw_k_unit_per_pf > 0
+            else 1.0
+        )
 
         drive_strength = area_ratio if area_ratio > 0 else 1.0
 
@@ -488,6 +506,8 @@ class INVD1Normalizer:
             area_ratio=area_ratio,
             d0_ratio=d0_ratio,
             k_ratio=k_ratio,
+            e0_ratio=e0_ratio,
+            k_power_ratio=k_power_ratio,
             leakage_ratio=leakage_ratio,
             input_cap_ratio=input_cap_ratio,
             drive_strength=drive_strength,
