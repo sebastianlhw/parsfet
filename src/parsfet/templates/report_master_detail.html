@@ -320,15 +320,18 @@
                                         Physical</p>
                                     <div class="flex items-center gap-4">
                                         <div>
-                                            <span class="text-xs text-slate-500 block">Size (Normalized)</span>
+                                            <span class="text-xs text-slate-500 block">Size</span>
                                             <span class="text-lg font-bold text-slate-800"
                                                 x-text="selectedCell.metrics.area_ratio.toFixed(2) + 'x'"></span>
                                         </div>
                                         <div>
-                                            <span class="text-xs text-slate-500 block">Area (µm²)</span>
-                                            <span class="text-sm font-mono text-slate-600"
-                                                x-text="selectedCell.metrics.raw.area_um2.toFixed(3)"></span>
+                                            <span class="text-xs text-slate-500 block">Input Cap</span>
+                                            <span class="text-lg font-bold text-slate-600"
+                                                x-text="selectedCell.metrics.input_cap_ratio.toFixed(2) + 'x'"></span>
                                         </div>
+                                    </div>
+                                    <div class="mt-2 text-xs text-slate-400">
+                                        Area: <span class="font-mono text-slate-500" x-text="selectedCell.metrics.raw.area_um2.toFixed(3)"></span> µm²
                                     </div>
                                 </div>
 
