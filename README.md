@@ -1,4 +1,4 @@
-t # Pars-FET 🌿🍨
+# Pars-FET 🌿🍨
 
 ![Security Scan](https://github.com/sebastianlhw/parsfet/actions/workflows/security.yml/badge.svg)
 
