@@ -55,7 +55,8 @@ def test_html_report_xss_prevention(tmp_path):
     """Verifies that malicious payloads in cell names are escaped in the HTML report."""
 
     # Payload that would break out of script tag if unescaped
-    malicious_payload = "</script><script>alert('XSS')</script>"
+    # Payload with multiple dangerous characters
+    malicious_payload = "<script>alert('XSS & more')</script>"
 
     cell = MockCell(name=malicious_payload)
     library = MockLibrary(name="MaliciousLib", cells={malicious_payload: cell})
@@ -74,12 +75,13 @@ def test_html_report_xss_prevention(tmp_path):
 
     content = output_path.read_text(encoding="utf-8")
 
-    # The malicious sequence should NOT be present literally
-    assert "</script><script>alert('XSS')</script>" not in content
-
+    # The malicious sequence should NOT be present literally as a contiguous string
+    # (We cannot just check for "<script>" because the template itself has valid script tags)
+    assert malicious_payload not in content
+    
     # The escaped version should be present
-    # We replaced < with \u003c
-    expected_escaped = r"\u003c/script>\u003cscript>alert('XSS')\u003c/script>"
+    # < -> \u003c, > -> \u003e, & -> \u0026
+    expected_escaped = r"\u003cscript\u003ealert('XSS \u0026 more')\u003c/script\u003e"
     assert expected_escaped in content
 
     # Verify that the JSON is valid and decodes correctly
