@@ -12,14 +12,6 @@ parsfet.comparators.cell\_diff module
    :show-inheritance:
    :undoc-members:
 
-parsfet.comparators.fingerprint module
---------------------------------------
-
-.. automodule:: parsfet.comparators.fingerprint
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
 Module contents
 ---------------
 

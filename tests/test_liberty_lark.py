@@ -12,6 +12,13 @@ from parsfet.parsers.liberty import LibertyParser
 
 
 def test_lark_parse_liberty_library_attributes(sample_liberty_content):
+    """Verifies that library-level attributes are parsed correctly by Lark.
+
+    Checks:
+        - Library name, technology, delay model.
+        - Units (time, voltage, capacitance).
+        - Nominal operating conditions.
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -28,6 +35,13 @@ def test_lark_parse_liberty_library_attributes(sample_liberty_content):
 
 
 def test_lark_parse_cells_and_pins(sample_liberty_content):
+    """Verifies that cells and pins are parsed correctly by Lark.
+
+    Checks:
+        - Cell attributes (area, leakage).
+        - Pin attributes (direction, capacitance, function).
+        - Sequential cell identification.
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -52,6 +66,12 @@ def test_lark_parse_cells_and_pins(sample_liberty_content):
 
 
 def test_lark_timing_arcs_and_lut(sample_liberty_content):
+    """Verifies that timing arcs and LUTs are parsed correctly by Lark.
+
+    Checks:
+        - Timing arc structure.
+        - 2D Lookup Table dimensions and values.
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -73,6 +93,7 @@ def test_lark_timing_arcs_and_lut(sample_liberty_content):
 
 
 def test_lark_parse_from_file(sample_liberty_file):
+    """Verifies Lark parsing from a file path."""
     parser = LibertyParser()
     lib = parser.parse(sample_liberty_file)
     assert lib.name == "test_lib"
@@ -80,6 +101,7 @@ def test_lark_parse_from_file(sample_liberty_file):
 
 
 def test_lark_unit_normalizer(sample_liberty_content):
+    """Verifies unit normalizer creation from Lark-parsed library."""
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -89,6 +111,7 @@ def test_lark_unit_normalizer(sample_liberty_content):
 
 
 def test_lark_fo4_calculation(sample_liberty_content):
+    """Verifies FO4 operating point calculation on Lark-parsed library."""
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -99,6 +122,7 @@ def test_lark_fo4_calculation(sample_liberty_content):
 
 
 def test_lark_missing_baseline_cell(sample_liberty_content):
+    """Verifies baseline fallback logic with Lark parser."""
     content = sample_liberty_content.replace("cell(INV_X1)", "cell(OTHER_X1)")
     parser = LibertyParser()
     lib = parser.parse_string(content)

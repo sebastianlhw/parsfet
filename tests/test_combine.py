@@ -1,4 +1,9 @@
-"""Tests for multi-file combining functionality in parsfet.data module."""
+"""Tests for multi-file combining functionality in parsfet.data module.
+
+Verifies that the Dataset class correctly handles loading multiple libraries,
+detecting duplicate cells, and merging them into a single unified dataset with
+consistent normalization.
+"""
 
 import tempfile
 import textwrap
@@ -12,7 +17,7 @@ from parsfet.exceptions import DuplicateCellError
 
 @pytest.fixture
 def lib1_content():
-    """Liberty file with INV_X1 and NAND2_X1."""
+    """Liberty file content with INV_X1 and NAND2_X1."""
     return textwrap.dedent("""
     library(lib1) {
       technology (cmos);
@@ -88,7 +93,7 @@ def lib1_content():
 
 @pytest.fixture
 def lib2_content():
-    """Liberty file with NOR2_X1 and BUF_X1 (no duplicates with lib1)."""
+    """Liberty file content with NOR2_X1 and BUF_X1 (no duplicates with lib1)."""
     return textwrap.dedent("""
     library(lib2) {
       technology (cmos);
@@ -146,7 +151,7 @@ def lib2_content():
 
 @pytest.fixture
 def lib3_duplicate_content():
-    """Liberty file with INV_X1 (duplicates with lib1)."""
+    """Liberty file content with INV_X1 (duplicates with lib1)."""
     return textwrap.dedent("""
     library(lib3) {
       technology (cmos);
@@ -205,6 +210,7 @@ def lib3_duplicate_content():
 
 @pytest.fixture
 def lib1_file(lib1_content):
+    """Creates a temporary file for lib1."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(lib1_content)
         path = Path(f.name)
@@ -214,6 +220,7 @@ def lib1_file(lib1_content):
 
 @pytest.fixture
 def lib2_file(lib2_content):
+    """Creates a temporary file for lib2."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(lib2_content)
         path = Path(f.name)
@@ -223,6 +230,7 @@ def lib2_file(lib2_content):
 
 @pytest.fixture
 def lib3_file(lib3_duplicate_content):
+    """Creates a temporary file for lib3."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(lib3_duplicate_content)
         path = Path(f.name)
@@ -234,7 +242,7 @@ class TestFindDuplicates:
     """Tests for Dataset.find_duplicates() method."""
 
     def test_no_duplicates(self, lib1_file, lib2_file):
-        """Two files with no overlapping cells should have no duplicates."""
+        """Verifies that non-overlapping libraries report no duplicates."""
         ds = Dataset()
         ds.load_files([lib1_file, lib2_file], normalize=False)
 
@@ -242,7 +250,7 @@ class TestFindDuplicates:
         assert dups == {}
 
     def test_with_duplicates(self, lib1_file, lib3_file):
-        """Two files with overlapping INV_X1 should detect duplicate."""
+        """Verifies correct detection of duplicate cells (INV_X1)."""
         ds = Dataset()
         ds.load_files([lib1_file, lib3_file], normalize=False)
 
@@ -251,7 +259,7 @@ class TestFindDuplicates:
         assert len(dups["INV_X1"]) == 2
 
     def test_single_file_no_duplicates(self, lib1_file):
-        """Single file should never have duplicates."""
+        """Verifies that a single file never reports duplicates."""
         ds = Dataset()
         ds.load_files([lib1_file], normalize=False)
 
@@ -263,7 +271,7 @@ class TestCombine:
     """Tests for Dataset.combine() method."""
 
     def test_combine_no_duplicates(self, lib1_file, lib2_file):
-        """Combining files with distinct cells should succeed."""
+        """Verifies combining files with distinct cells into one library."""
         ds = Dataset()
         ds.load_files([lib1_file, lib2_file], normalize=False)
 
@@ -275,7 +283,7 @@ class TestCombine:
         assert combined.entries[0].normalizer is not None
 
     def test_combine_with_duplicates_raises(self, lib1_file, lib3_file):
-        """Combining files with duplicates should raise DuplicateCellError."""
+        """Verifies that duplicates raise DuplicateCellError by default."""
         ds = Dataset()
         ds.load_files([lib1_file, lib3_file], normalize=False)
 
@@ -286,7 +294,7 @@ class TestCombine:
         assert "INV_X1" in exc_info.value.cell_names()
 
     def test_combine_allow_duplicates(self, lib1_file, lib3_file):
-        """Combining with allow_duplicates=True should use first occurrence."""
+        """Verifies that allow_duplicates=True merges successfully (first wins)."""
         ds = Dataset()
         ds.load_files([lib1_file, lib3_file], normalize=False)
 
@@ -298,14 +306,14 @@ class TestCombine:
         assert inv_cell.area == 1.5
 
     def test_combine_empty_raises(self):
-        """Combining empty dataset should raise ValueError."""
+        """Verifies that combining an empty dataset raises ValueError."""
         ds = Dataset()
 
         with pytest.raises(ValueError, match="No entries loaded"):
             ds.combine()
 
     def test_combine_preserves_metrics(self, lib1_file, lib2_file):
-        """Combined dataset should have normalized metrics for all cells."""
+        """Verifies that combined cells are correctly normalized."""
         ds = Dataset()
         ds.load_files([lib1_file, lib2_file], normalize=False)
 
@@ -323,7 +331,7 @@ class TestDataFrameSourceFile:
     """Tests for source_file column in to_dataframe()."""
 
     def test_source_file_single_lib(self, lib1_file):
-        """Single file should have source_file in DataFrame."""
+        """Verifies source_file column for single library load."""
         ds = load_files([lib1_file])
         df = ds.to_dataframe()
 
@@ -333,7 +341,7 @@ class TestDataFrameSourceFile:
         assert str(lib1_file) in df["source_file"].iloc[0]
 
     def test_source_file_combined(self, lib1_file, lib2_file):
-        """Combined dataset should track source files per cell."""
+        """Verifies that source_file is preserved correctly after combine()."""
         ds = Dataset()
         ds.load_files([lib1_file, lib2_file], normalize=False)
         combined = ds.combine()

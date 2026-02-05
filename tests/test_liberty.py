@@ -7,6 +7,13 @@ from parsfet.parsers.liberty import LibertyParser
 
 
 def test_parse_liberty_library_attributes(sample_liberty_content):
+    """Verifies that library-level attributes are parsed correctly.
+
+    Checks:
+        - Library name, technology, delay model.
+        - Units (time, voltage, capacitance).
+        - Nominal operating conditions (process, temperature, voltage).
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -23,6 +30,14 @@ def test_parse_liberty_library_attributes(sample_liberty_content):
 
 
 def test_parse_cells_and_pins(sample_liberty_content):
+    """Verifies that cells and pins are parsed correctly.
+
+    Checks:
+        - Cell existence and basic attributes (area, leakage).
+        - Pin existence, direction, and capacitance.
+        - Function definitions for output pins.
+        - Sequential cell identification and clock pin attributes.
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -47,6 +62,12 @@ def test_parse_cells_and_pins(sample_liberty_content):
 
 
 def test_timing_arcs_and_lut(sample_liberty_content):
+    """Verifies that timing arcs and lookup tables are parsed correctly.
+
+    Checks:
+        - Timing arc existence and attributes (related_pin, timing_sense).
+        - Lookup table dimensions and content (index_1, index_2, values).
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -69,6 +90,13 @@ def test_timing_arcs_and_lut(sample_liberty_content):
 
 
 def test_lut_interpolation_1d():
+    """Verifies 1D lookup table interpolation.
+
+    Checks:
+        - Exact matches.
+        - Linear interpolation between points.
+        - Clamping (extrapolation) at boundaries.
+    """
     lut = LookupTable(index_1=[0.1, 0.5, 1.0], values=[0.1, 0.5, 1.0])
 
     # Exact match
@@ -83,6 +111,13 @@ def test_lut_interpolation_1d():
 
 
 def test_lut_interpolation_2d():
+    """Verifies 2D lookup table interpolation.
+
+    Checks:
+        - Corner values.
+        - Center value (bilinear interpolation).
+        - Edge values.
+    """
     # Simple bilinear surface: z = x + y
     lut = LookupTable(
         index_1=[0.0, 1.0],
@@ -106,6 +141,12 @@ def test_lut_interpolation_2d():
 
 
 def test_parse_from_file(sample_liberty_file):
+    """Verifies parsing directly from a file path.
+
+    Checks:
+        - Library name extraction.
+        - Cell presence.
+    """
     parser = LibertyParser()
     lib = parser.parse(sample_liberty_file)
     assert (
@@ -118,6 +159,12 @@ def test_parse_from_file(sample_liberty_file):
 
 
 def test_unit_normalizer(sample_liberty_content):
+    """Verifies the unit normalizer functionality.
+
+    Checks:
+        - Correct multiplier extraction for standard units (1ns, 1pf).
+        - Correct multiplier calculation for non-standard units (1ps, 1ff).
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -144,6 +191,12 @@ def test_unit_normalizer(sample_liberty_content):
 
 
 def test_fo4_calculation(sample_liberty_content):
+    """Verifies the FO4 operating point calculation.
+
+    Checks:
+        - Correct load calculation (4 * input_cap).
+        - Slew calculation via iterative convergence.
+    """
     parser = LibertyParser()
     lib = parser.parse_string(sample_liberty_content)
 
@@ -159,6 +212,12 @@ def test_fo4_calculation(sample_liberty_content):
 
 
 def test_linear_model_fit():
+    """Verifies linear delay model extraction (D = D0 + k * Load).
+
+    Checks:
+        - Correct extraction of D0 (intercept) and k (slope).
+        - R-squared calculation for a perfect linear fit.
+    """
     # Model: D = 0.1 + 0.5 * Load
     lut = LookupTable(
         index_1=[0.1],  # Fixed slew
@@ -173,6 +232,12 @@ def test_linear_model_fit():
 
 
 def test_missing_baseline_cell(sample_liberty_content):
+    """Verifies baseline cell detection fallback.
+
+    Checks:
+        - Automatic detection of inverter via classifier when standard name is missing.
+        - Fallback operating point calculation when no inverter is found.
+    """
     # Rename INV_X1 to OTHER_X1.
     # Since OTHER_X1 is logically an inverter (has function !A),
     # the classifier should identify it as an inverter and use it as baseline.

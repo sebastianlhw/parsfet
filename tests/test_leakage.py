@@ -1,4 +1,15 @@
+"""Tests for leakage power extraction.
+
+Verifies that the parser correctly identifies the worst-case leakage power
+from multiple conditional `leakage_power` groups.
+"""
+
 def test_worst_case_leakage_liberty():
+    """Verifies that the Liberty parser picks the maximum leakage value.
+
+    Scenario: A cell has a default `cell_leakage_power` of 1.0, but a conditional
+    leakage group specifies 5.0. The parsed `cell_leakage_power` should be 5.0.
+    """
     from parsfet.parsers.liberty import LibertyParser
 
     lib_content = """
@@ -25,6 +36,11 @@ def test_worst_case_leakage_liberty():
 
 
 def test_worst_case_leakage_json():
+    """Verifies that the JSON parser picks the maximum leakage value.
+
+    Scenario: Similar to the Liberty test, but input is in JSON format.
+    Checks that conditional leakage values override the base value if higher.
+    """
     import json
 
     from parsfet.parsers.liberty_json import LibertyJSONParser

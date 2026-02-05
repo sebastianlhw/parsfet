@@ -706,7 +706,7 @@ class LibertyLibrary(BaseModel):
             max_iterations: Maximum iterations before returning (default 10).
             initial_slew_guess: Starting slew. If None, uses median from LUT.
             dampening_factor: Relaxation factor (0-1). Default 0.714 for stability.
-            trace: If True, prints convergence trace for debugging.
+            trace: If True, prints detailed convergence trace to stdout for debugging.
 
         Returns:
             A tuple (typical_slew, typical_load) where:

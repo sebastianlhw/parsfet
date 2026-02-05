@@ -11,6 +11,7 @@ Subpackages
    parsfet.models
    parsfet.normalizers
    parsfet.parsers
+   parsfet.reporting
 
 Submodules
 ----------

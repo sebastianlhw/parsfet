@@ -20,10 +20,26 @@ parsfet.parsers.lef module
    :show-inheritance:
    :undoc-members:
 
+parsfet.parsers.lef\_legacy module
+----------------------------------
+
+.. automodule:: parsfet.parsers.lef_legacy
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 parsfet.parsers.liberty module
 ------------------------------
 
 .. automodule:: parsfet.parsers.liberty
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+parsfet.parsers.liberty\_legacy module
+--------------------------------------
+
+.. automodule:: parsfet.parsers.liberty_legacy
    :members:
    :show-inheritance:
    :undoc-members:

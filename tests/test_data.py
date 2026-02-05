@@ -1,4 +1,8 @@
-"""Tests for parsfet.data module."""
+"""Tests for parsfet.data module.
+
+Verifies the Dataset API for batch loading, DataFrame conversion, and
+feature extraction from library files.
+"""
 
 import numpy as np
 import pandas as pd
@@ -8,7 +12,7 @@ from parsfet.data import FEATURE_COLUMNS, Dataset, load_files, load_from_pattern
 
 
 def test_load_files_single(sample_liberty_file):
-    """Test loading a single Liberty file."""
+    """Verifies loading a single Liberty file into a Dataset."""
     ds = load_files([sample_liberty_file])
 
     assert len(ds.entries) == 1
@@ -17,7 +21,10 @@ def test_load_files_single(sample_liberty_file):
 
 
 def test_to_dataframe_columns(sample_liberty_file):
-    """Test that to_dataframe returns correct columns."""
+    """Verifies that to_dataframe() output contains all expected columns.
+
+    Checks for identifier columns, ratio columns, raw metrics, and environment context.
+    """
     df = load_files([sample_liberty_file]).to_dataframe()
 
     # Check required columns
@@ -39,14 +46,14 @@ def test_to_dataframe_columns(sample_liberty_file):
 
 
 def test_to_dataframe_cell_type_categorical(sample_liberty_file):
-    """Test that cell_type is a categorical column."""
+    """Verifies that 'cell_type' column is categorical (memory optimization)."""
     df = load_files([sample_liberty_file]).to_dataframe()
 
     assert df["cell_type"].dtype.name == "category"
 
 
 def test_to_dataframe_content(sample_liberty_file):
-    """Test that DataFrame contains expected cells."""
+    """Verifies that the DataFrame contains expected cell data (INV_X1, DFF_X1)."""
     df = load_files([sample_liberty_file]).to_dataframe()
 
     # Sample lib has INV_X1 and DFF_X1
@@ -56,7 +63,10 @@ def test_to_dataframe_content(sample_liberty_file):
 
 
 def test_to_numpy_shape(sample_liberty_file):
-    """Test to_numpy returns correct shapes."""
+    """Verifies that to_numpy() returns arrays with correct dimensions.
+
+    X should be (n_samples, n_features), y should be (n_samples,).
+    """
     X, y, label_map = load_files([sample_liberty_file]).to_numpy()
 
     # Should have 2 cells (INV_X1, DFF_X1)
@@ -67,7 +77,7 @@ def test_to_numpy_shape(sample_liberty_file):
 
 
 def test_to_numpy_label_map(sample_liberty_file):
-    """Test that label_map contains cell types."""
+    """Verifies that label_map correctly maps encoded labels back to strings."""
     X, y, label_map = load_files([sample_liberty_file]).to_numpy()
 
     # All labels in y should be valid keys in label_map
@@ -76,7 +86,7 @@ def test_to_numpy_label_map(sample_liberty_file):
 
 
 def test_empty_dataset():
-    """Test empty dataset returns empty structures."""
+    """Verifies behavior when operating on an empty Dataset."""
     ds = Dataset()
     df = ds.to_dataframe()
     assert df.empty
@@ -88,13 +98,16 @@ def test_empty_dataset():
 
 
 def test_load_files_not_found():
-    """Test that FileNotFoundError is raised for missing files."""
+    """Verifies that FileNotFoundError is raised for non-existent files."""
     with pytest.raises(FileNotFoundError):
         load_files(["nonexistent.lib"])
 
 
 def test_feature_columns_count():
-    """Verify FEATURE_COLUMNS matches to_feature_vector size."""
+    """Verifies that FEATURE_COLUMNS constant matches NormalizedMetrics output size.
+
+    This ensures that the documentation/definition remains in sync with the implementation.
+    """
     # This ensures the constant stays in sync with NormalizedMetrics
     from parsfet.normalizers.invd1 import NormalizedMetrics
 
@@ -106,7 +119,7 @@ def test_feature_columns_count():
 
 
 def test_load_tech_lef(sample_liberty_file, sample_lef_file):
-    """Test loading TechLEF adds tech_info to entries."""
+    """Verifies loading TechLEF data and associating it with library entries."""
     ds = Dataset()
     ds.load_files([sample_liberty_file])
     ds.load_tech_lef(sample_lef_file)  # Use LEF file as TechLEF (has layers)
@@ -117,7 +130,7 @@ def test_load_tech_lef(sample_liberty_file, sample_lef_file):
 
 
 def test_to_dataframe_lef_columns(sample_liberty_file, sample_lef_file):
-    """Test that LEF columns are present after loading LEF."""
+    """Verifies that LEF physical columns are populated in DataFrame."""
     ds = Dataset()
     ds.load_files([sample_liberty_file])
     ds.load_lef([sample_lef_file])  # Sample LEF has INV_X1 macro
@@ -140,21 +153,25 @@ def test_to_dataframe_lef_columns(sample_liberty_file, sample_lef_file):
 
 
 def test_load_lef_not_found():
-    """Test that FileNotFoundError is raised for missing LEF file."""
+    """Verifies error handling for missing LEF file."""
     ds = Dataset()
     with pytest.raises(FileNotFoundError):
         ds.load_lef(["nonexistent.lef"])
 
 
 def test_load_tech_lef_not_found():
-    """Test that FileNotFoundError is raised for missing TechLEF file."""
+    """Verifies error handling for missing TechLEF file."""
     ds = Dataset()
     with pytest.raises(FileNotFoundError):
         ds.load_tech_lef("nonexistent.tlef")
 
 
 def test_export_to_json(sample_liberty_file, sample_lef_file):
-    """Test export_to_json produces proper structure."""
+    """Verifies that export_to_json produces a comprehensive data structure.
+
+    Checks for presence of library, cell, and technology sections, including
+    physical pin details from LEF.
+    """
     ds = Dataset()
     ds.load_files([sample_liberty_file])
     ds.load_lef([sample_lef_file])
@@ -183,7 +200,7 @@ def test_export_to_json(sample_liberty_file, sample_lef_file):
 
 
 def test_export_to_json_empty():
-    """Test export_to_json on empty dataset."""
+    """Verifies that export_to_json returns an error dict for empty dataset."""
     ds = Dataset()
     data = ds.export_to_json()
     assert "error" in data

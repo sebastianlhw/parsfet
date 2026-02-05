@@ -7,6 +7,13 @@ from parsfet.parsers.lef import LEFParser, TechLEFParser
 
 
 def test_parse_lef_header_and_units(sample_lef_content):
+    """Verifies parsing of LEF header and units.
+
+    Checks:
+        - Version string.
+        - Database units (DBU per micron).
+        - Manufacturing grid.
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -17,6 +24,14 @@ def test_parse_lef_header_and_units(sample_lef_content):
 
 
 def test_parse_layers(sample_lef_content):
+    """Verifies parsing of layer definitions.
+
+    Checks:
+        - Layer type (routing, cut).
+        - Routing direction (horizontal/vertical).
+        - Physical attributes (width, pitch, spacing).
+        - Electrical attributes (resistance, capacitance).
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -37,6 +52,12 @@ def test_parse_layers(sample_lef_content):
 
 
 def test_parse_vias(sample_lef_content):
+    """Verifies parsing of via definitions.
+
+    Checks:
+        - Via name.
+        - Layer connectivity list.
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -47,6 +68,13 @@ def test_parse_vias(sample_lef_content):
 
 
 def test_parse_sites(sample_lef_content):
+    """Verifies parsing of site definitions.
+
+    Checks:
+        - Site class type.
+        - Dimensions (width, height).
+        - Symmetry options.
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -59,6 +87,14 @@ def test_parse_sites(sample_lef_content):
 
 
 def test_parse_macros(sample_lef_content):
+    """Verifies parsing of macro (cell) definitions.
+
+    Checks:
+        - Macro class, origin, size, symmetry.
+        - Site reference.
+        - Pin definitions (direction, layer ports).
+        - Obstruction geometries.
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -90,6 +126,12 @@ def test_parse_macros(sample_lef_content):
 
 
 def test_tech_lef_parser(sample_lef_content):
+    """Verifies the TechLEF parser specialized behavior.
+
+    Checks that the TechLEF parser correctly extracts technology information
+    (units, layers, vias) while ignoring macro definitions, resulting in a
+    lightweight TechLEF object.
+    """
     # TechLEF parser should only parse layers/vias/sites, not macros
     parser = TechLEFParser()
     # TechLEF parser actually uses LEFParser internally and copies fields,
@@ -109,6 +151,12 @@ def test_tech_lef_parser(sample_lef_content):
 
 
 def test_lef_validation(sample_lef_content):
+    """Verifies LEF validation logic.
+
+    Checks:
+        - No warnings for valid content.
+        - Warning generation for missing layer definitions.
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -122,6 +170,7 @@ def test_lef_validation(sample_lef_content):
 
 
 def test_parse_file(sample_lef_file):
+    """Verifies parsing directly from a LEF file."""
     parser = LEFParser()
     lib = parser.parse(sample_lef_file)
     assert lib.units_database == 1000
@@ -132,7 +181,7 @@ def test_parse_file(sample_lef_file):
 
 
 def test_macro_pin_layers_used(sample_lef_content):
-    """Test MacroPin.layers_used property."""
+    """Verifies extraction of used layers from MacroPin."""
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -144,7 +193,10 @@ def test_macro_pin_layers_used(sample_lef_content):
 
 
 def test_metal_layer_min_size(sample_lef_content):
-    """Test MetalLayer.min_size property."""
+    """Verifies calculation of min_size property for MetalLayer.
+
+    Should fallback to 'width' if 'min_width' is not specified.
+    """
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
@@ -154,7 +206,7 @@ def test_metal_layer_min_size(sample_lef_content):
 
 
 def test_cell_physical_from_macro(sample_lef_content):
-    """Test CellPhysical.from_macro factory method."""
+    """Verifies conversion from LEF Macro to simplified CellPhysical model."""
     from parsfet.models.physical import CellPhysical
 
     parser = LEFParser()
@@ -176,7 +228,7 @@ def test_cell_physical_from_macro(sample_lef_content):
 
 
 def test_tech_info_from_tech_lef(sample_lef_content):
-    """Test TechInfo.from_tech_lef factory method."""
+    """Verifies conversion from TechLEF to simplified TechInfo model."""
     from parsfet.models.physical import TechInfo
 
     parser = TechLEFParser()

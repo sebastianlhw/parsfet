@@ -6,12 +6,15 @@ per cell, offering a more granular approach than monolithic .lib files.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
 from ..models.common import OperatingCondition, ProcessCorner
 from ..models.liberty import Cell, LibertyLibrary, LookupTable, Pin, PowerArc, TimingArc
 from .base import BaseParser
+
+logger = logging.getLogger(__name__)
 
 
 class LibertyJSONParser(BaseParser[LibertyLibrary]):
@@ -132,7 +135,7 @@ class LibertyJSONParser(BaseParser[LibertyLibrary]):
                         cell = self._build_cell(cell_data, cell_name)
                         library.cells[cell.name] = cell
                     except Exception as e:
-                        print(f"Warning: Failed to parse {json_file}: {e}")
+                        logger.warning(f"Failed to parse {json_file}: {e}")
 
         return library
 

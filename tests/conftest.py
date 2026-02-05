@@ -1,3 +1,8 @@
+"""Pytest configuration and fixtures.
+
+Provides shared fixtures for Liberty and LEF content/files used across multiple tests.
+"""
+
 import tempfile
 import textwrap
 from pathlib import Path
@@ -7,6 +12,15 @@ import pytest
 
 @pytest.fixture
 def sample_liberty_content():
+    """Provides a sample Liberty file content as a string.
+
+    Contains:
+    - Library header (units, operating conditions).
+    - Lookup table template (5x5).
+    - Cells:
+        - INV_X1: Inverter with timing arcs (rise/fall).
+        - DFF_X1: Sequential cell (Flip-Flop) with clock pin.
+    """
     return textwrap.dedent("""
     library(test_lib) {
       technology (cmos);
@@ -86,6 +100,15 @@ def sample_liberty_content():
 
 @pytest.fixture
 def sample_lef_content():
+    """Provides a sample LEF file content as a string.
+
+    Contains:
+    - Header (version, units, grid).
+    - Layers (M1, M2).
+    - Vias (M1_M2).
+    - Sites (core).
+    - Macro (INV_X1) with pins and obstructions.
+    """
     return textwrap.dedent("""
     VERSION 5.8 ;
     BUSBITCHARS "[]" ;
@@ -158,6 +181,11 @@ def sample_lef_content():
 
 @pytest.fixture
 def sample_liberty_file(sample_liberty_content):
+    """Creates a temporary .lib file populated with sample content.
+
+    Yields:
+        Path to the temporary file. Auto-deletes on cleanup.
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lib", delete=False) as f:
         f.write(sample_liberty_content)
         path = Path(f.name)
@@ -167,6 +195,11 @@ def sample_liberty_file(sample_liberty_content):
 
 @pytest.fixture
 def sample_lef_file(sample_lef_content):
+    """Creates a temporary .lef file populated with sample content.
+
+    Yields:
+        Path to the temporary file. Auto-deletes on cleanup.
+    """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".lef", delete=False) as f:
         f.write(sample_lef_content)
         path = Path(f.name)

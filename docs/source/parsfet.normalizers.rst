@@ -12,6 +12,14 @@ parsfet.normalizers.classifier module
    :show-inheritance:
    :undoc-members:
 
+parsfet.normalizers.classifier\_legacy module
+---------------------------------------------
+
+.. automodule:: parsfet.normalizers.classifier_legacy
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 parsfet.normalizers.invd1 module
 --------------------------------
 

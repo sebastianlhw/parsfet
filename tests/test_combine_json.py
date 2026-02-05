@@ -17,7 +17,10 @@ from parsfet.data import Dataset
 
 @pytest.fixture
 def sample_json_export(tmp_path: Path) -> Path:
-    """Create a minimal JSON export file for testing."""
+    """Create a minimal JSON export file for testing.
+
+    Contains two cells: INVD1 (baseline) and NAND2D1.
+    """
     export_data = {
         "library": "test_export",
         "baseline": {
@@ -79,7 +82,7 @@ class TestLoadJsonFile:
     """Tests for loading JSON exports."""
 
     def test_load_json_creates_entry(self, sample_json_export: Path):
-        """Test that loading a JSON file creates a LibraryEntry."""
+        """Test that loading a JSON file creates a valid LibraryEntry."""
         ds = Dataset()
         ds.load_files([sample_json_export])
 
@@ -89,7 +92,7 @@ class TestLoadJsonFile:
         assert len(entry.library.cells) == 2
 
     def test_load_json_marks_from_json(self, sample_json_export: Path):
-        """Test that JSON entries are marked with from_json=True."""
+        """Test that JSON entries are correctly marked with from_json=True."""
         ds = Dataset()
         ds.load_files([sample_json_export])
 
@@ -97,7 +100,7 @@ class TestLoadJsonFile:
         assert entry.from_json is True
 
     def test_load_json_stores_raw_metrics(self, sample_json_export: Path):
-        """Test that raw metrics are stored for re-normalization."""
+        """Test that raw metrics are cached for potential re-normalization."""
         ds = Dataset()
         ds.load_files([sample_json_export])
 
@@ -123,7 +126,11 @@ class TestCombineJsonWithLib:
         assert len(entry.metrics) == 2
 
     def test_combine_reuses_raw_metrics(self, sample_json_export: Path):
-        """Test that combine uses raw metrics from JSON for normalization."""
+        """Test that combine uses cached raw metrics from JSON for normalization.
+
+        This verifies that we don't need the original .lib file to re-normalize
+        cells if we have the raw metrics in the JSON export.
+        """
         ds = Dataset()
         ds.load_files([sample_json_export], normalize=False)
         combined = ds.combine()
@@ -139,7 +146,7 @@ class TestLibraryEntryFields:
     """Tests for LibraryEntry dataclass fields."""
 
     def test_from_json_default_false(self):
-        """Test that from_json defaults to False for lib files."""
+        """Test that from_json defaults to False for standard Liberty files."""
         from parsfet.data import LibraryEntry
         from parsfet.models.liberty import LibertyLibrary
 

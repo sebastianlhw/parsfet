@@ -1,17 +1,30 @@
+"""CSV Report Generator.
+
+This module exports the library metrics to a flat CSV file, suitable for
+analysis in spreadsheet software or data processing tools. It flattens the
+hierarchical structure of the ExportedLibrary model into a single table with one
+row per cell.
+"""
 
 import csv
 from typing import TextIO
+
 from parsfet.models.export import ExportedLibrary
 
-def generate_csv(library: ExportedLibrary, output_file: TextIO):
+
+def generate_csv(library: ExportedLibrary, output_file: TextIO) -> None:
     """Generates a CSV export of the library data.
 
+    Writes the flattened metrics for each cell in the library to the provided
+    output stream. Columns include identification (name, type), physical data
+    (area, leakage), linear model parameters (D0, k, E0), and normalized ratios.
+
     Args:
-        library: Reduced ExportedLibrary object.
-        output_file: File-like object to write CSV to.
+        library: The ExportedLibrary object containing the data to export.
+        output_file: A file-like object (opened in text mode) to write the CSV data to.
     """
     writer = csv.writer(output_file)
-    
+
     # Define Headers
     headers = [
         "cell_name",
@@ -37,9 +50,9 @@ def generate_csv(library: ExportedLibrary, output_file: TextIO):
         "d0_ratio",
         "leakage_ratio",
     ]
-    
+
     writer.writerow(headers)
-    
+
     # Iterate and write rows
     for cell_name, cell in library.cells.items():
         # Helpers to safely get nested attributes
@@ -48,7 +61,7 @@ def generate_csv(library: ExportedLibrary, output_file: TextIO):
         delay_fit = cell.delay_fit_quality
         power_fit = cell.power_fit_quality
         raw = cell.raw
-        
+
         row = [
             cell.cell_name,
             cell.cell_type,
@@ -73,5 +86,5 @@ def generate_csv(library: ExportedLibrary, output_file: TextIO):
             cell.d0_ratio,
             cell.leakage_ratio,
         ]
-        
+
         writer.writerow(row)

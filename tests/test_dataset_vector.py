@@ -1,4 +1,8 @@
-"""Tests for Dataset.to_vector() and Dataset.to_summary_dict()."""
+"""Tests for Dataset.to_vector() and Dataset.to_summary_dict().
+
+Verifies the extraction of library-level feature vectors (fingerprints)
+and summary statistics suitable for machine learning or high-level analysis.
+"""
 
 from pathlib import Path
 
@@ -8,7 +12,7 @@ from parsfet.data import Dataset
 
 
 def test_to_vector_returns_15_elements(sample_liberty_path):
-    """Test that to_vector() returns exactly 15 features."""
+    """Verifies that to_vector() returns exactly 15 feature elements."""
     ds = Dataset().load_files([sample_liberty_path])
     vector = ds.to_vector()
 
@@ -17,7 +21,10 @@ def test_to_vector_returns_15_elements(sample_liberty_path):
 
 
 def test_to_vector_mean_ratios(sample_liberty_path):
-    """Test that mean ratios are computed correctly."""
+    """Verifies that the first 4 elements are mean ratios (area, d0, k, leakage).
+
+    Checks that they are positive for a valid library.
+    """
     ds = Dataset().load_files([sample_liberty_path])
     vector = ds.to_vector()
 
@@ -31,7 +38,10 @@ def test_to_vector_mean_ratios(sample_liberty_path):
 
 
 def test_to_vector_std_ratios(sample_liberty_path):
-    """Test that std ratios are included (elements 4-7)."""
+    """Verifies that elements 4-7 are standard deviation ratios.
+
+    Checks non-negativity.
+    """
     ds = Dataset().load_files([sample_liberty_path])
     vector = ds.to_vector()
 
@@ -46,7 +56,10 @@ def test_to_vector_std_ratios(sample_liberty_path):
 
 
 def test_to_vector_cell_ratios(sample_liberty_path):
-    """Test that cell count ratios are between 0 and 1."""
+    """Verifies that cell count ratios (elements 9-13) are normalized [0, 1].
+
+    Also checks that combinational and sequential ratios sum to approximately 1.
+    """
     ds = Dataset().load_files([sample_liberty_path])
     vector = ds.to_vector()
 
@@ -69,7 +82,7 @@ def test_to_vector_cell_ratios(sample_liberty_path):
 
 
 def test_to_vector_empty_dataset():
-    """Test to_vector() on empty dataset returns zeros."""
+    """Verifies that to_vector() returns a zero-vector for an empty dataset."""
     ds = Dataset()
     vector = ds.to_vector()
 
@@ -78,7 +91,11 @@ def test_to_vector_empty_dataset():
 
 
 def test_to_summary_dict_structure(sample_liberty_path):
-    """Test that to_summary_dict() has expected structure."""
+    """Verifies that to_summary_dict() returns a complete dictionary structure.
+
+    Checks existence of baseline, normalized_stats, cell_counts, function_types,
+    and metadata keys.
+    """
     ds = Dataset().load_files([sample_liberty_path])
     summary = ds.to_summary_dict()
 
@@ -102,7 +119,7 @@ def test_to_summary_dict_structure(sample_liberty_path):
 
 
 def test_to_summary_dict_cell_counts(sample_liberty_path):
-    """Test that cell counts are consistent."""
+    """Verifies that total cell count matches sum of combinational and sequential."""
     ds = Dataset().load_files([sample_liberty_path])
     summary = ds.to_summary_dict()
 
@@ -112,7 +129,7 @@ def test_to_summary_dict_cell_counts(sample_liberty_path):
 
 
 def test_to_summary_dict_empty_dataset():
-    """Test to_summary_dict() on empty dataset."""
+    """Verifies that to_summary_dict() returns an error dict for empty dataset."""
     ds = Dataset()
     summary = ds.to_summary_dict()
 
@@ -121,7 +138,7 @@ def test_to_summary_dict_empty_dataset():
 
 
 def test_vector_comparison_same_library(sample_liberty_path):
-    """Test that same library produces identical vectors."""
+    """Verifies determinism: same library loaded twice yields identical vectors."""
     ds1 = Dataset().load_files([sample_liberty_path])
     ds2 = Dataset().load_files([sample_liberty_path])
 
@@ -134,7 +151,10 @@ def test_vector_comparison_same_library(sample_liberty_path):
 
 @pytest.fixture
 def sample_liberty_path():
-    """Fixture providing path to sample liberty file."""
+    """Fixture providing path to sample liberty file.
+
+    Skips test if file is missing.
+    """
     # Use existing test data
     path = Path("testdata/example.lib")
     if not path.exists():

@@ -1,10 +1,19 @@
+"""Tests for linear power model extraction.
+
+Verifies the E = E0 + k * Load model extraction from Liberty power arcs.
+"""
 
 import pytest
 from parsfet.models.liberty import Cell, PowerArc, LookupTable
 from parsfet.models.export import ExportedCell, ExportedPowerModel
 
 def test_power_arc_linear_model():
-    """Test standard linear power model extraction from a PowerArc."""
+    """Verifies linear regression of power tables for a single arc.
+
+    Checks:
+        - Correct extraction of E0 (intercept) and k (slope).
+        - R-squared calculation for perfect fit.
+    """
     # Data: E = 0.5 + 0.1 * Load
     loads = [0.0, 10.0, 20.0]
     energies = [0.5, 1.5, 2.5]  # Matches exactly
@@ -31,7 +40,11 @@ def test_power_arc_linear_model():
     assert r2 == pytest.approx(1.0)
 
 def test_cell_power_aggregation():
-    """Test that Cell.linear_power_model picks the worst-case (max E0) arc."""
+    """Verifies that the cell-level power model is conservative (worst-case).
+
+    The model should select the parameters from the arc with the highest
+    intrinsic energy (E0) and slope (k).
+    """
     # Arc 1: E = 0.1 + 0.05 * Load (Low energy)
     arc1 = PowerArc(
         related_pin="A",
@@ -65,7 +78,11 @@ def test_cell_power_aggregation():
     assert r2 == pytest.approx(1.0)
 
 def test_export_model_structure():
-    """Test that ExportedCell can hold the new power model."""
+    """Verifies that the export model supports power parameters.
+
+    Checks that ExportedCell and ExportedPowerModel correctly store
+    E0 and k values.
+    """
     pm = ExportedPowerModel(
         e0_unit=0.5,
         k_unit_per_pf=0.01
