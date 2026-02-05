@@ -282,7 +282,8 @@ def generate_report(entries: list[Any], output_path: Path):
     template_content = template_path.read_text(encoding="utf-8")
     
     # Simple JSON injection
-    json_str = json.dumps(payload, default=str)
+    # Escape < to prevent XSS when embedding in HTML script tags
+    json_str = json.dumps(payload, default=str).replace("<", "\\u003c")
     
     final_html = template_content.replace(
         "{{ lib_data_json }}", 
