@@ -1,6 +1,6 @@
 # Pars-FET 🌿🍨
 
-![Security Scan](https://github.com/sebastianlhw/parsfet/actions/workflows/security.yml/badge.svg)
+![Security Scan](https://github.com/sebastianlhw/parsfet/actions/workflows/security.yml/badge.svg&cache-control=no-cache)
 
 <img src="docs/source/_static/logo.png" width="240">
 
