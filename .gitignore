@@ -1,3 +1,6 @@
+# hatchling artefact
+src/**/_version.py
+
 # test files
 testdata/
 output/
