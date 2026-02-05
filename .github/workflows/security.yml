@@ -27,7 +27,7 @@ jobs:
 
       - name: Run Bandit (Code Security)
         # Recursive scan on src/, skipping tests to avoid false positives
-        run: bandit -r src/
+        run: bandit -c pyproject.toml -r src/
 
       - name: Run Pip-Audit (Dependency Security)
         run: pip-audit
