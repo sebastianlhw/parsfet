@@ -713,15 +713,36 @@ class Dataset:
         combinational = total_cells - sequential
 
         # Functional type counts (name-based)
-        inverter_count = sum(1 for n in lib.cells if "INV" in n.upper() and "NAND" not in n.upper())
-        buffer_count = sum(1 for n in lib.cells if "BUF" in n.upper())
-        nand_count = sum(1 for n in lib.cells if "NAND" in n.upper())
-        nor_count = sum(1 for n in lib.cells if "NOR" in n.upper())
-        aoi_count = sum(1 for n in lib.cells if "AOI" in n.upper())
-        oai_count = sum(1 for n in lib.cells if "OAI" in n.upper())
-        mux_count = sum(1 for n in lib.cells if "MUX" in n.upper())
-        dff_count = sum(1 for n in lib.cells if "DFF" in n.upper() or "SDFF" in n.upper())
-        latch_count = sum(1 for n in lib.cells if "LAT" in n.upper())
+        inverter_count = 0
+        buffer_count = 0
+        nand_count = 0
+        nor_count = 0
+        aoi_count = 0
+        oai_count = 0
+        mux_count = 0
+        dff_count = 0
+        latch_count = 0
+
+        for n in lib.cells:
+            name_upper = n.upper()
+            if "INV" in name_upper and "NAND" not in name_upper:
+                inverter_count += 1
+            if "BUF" in name_upper:
+                buffer_count += 1
+            if "NAND" in name_upper:
+                nand_count += 1
+            if "NOR" in name_upper:
+                nor_count += 1
+            if "AOI" in name_upper:
+                aoi_count += 1
+            if "OAI" in name_upper:
+                oai_count += 1
+            if "MUX" in name_upper:
+                mux_count += 1
+            if "DFF" in name_upper or "SDFF" in name_upper:
+                dff_count += 1
+            if "LAT" in name_upper:
+                latch_count += 1
 
         return {
             "library": lib.name,

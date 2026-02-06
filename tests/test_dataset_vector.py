@@ -7,18 +7,18 @@ import pytest
 from parsfet.data import Dataset
 
 
-def test_to_vector_returns_15_elements(sample_liberty_path):
+def test_to_vector_returns_15_elements(sample_liberty_file):
     """Test that to_vector() returns exactly 15 features."""
-    ds = Dataset().load_files([sample_liberty_path])
+    ds = Dataset().load_files([sample_liberty_file])
     vector = ds.to_vector()
 
     assert len(vector) == 15
     assert all(isinstance(v, (int, float)) for v in vector)
 
 
-def test_to_vector_mean_ratios(sample_liberty_path):
+def test_to_vector_mean_ratios(sample_liberty_file):
     """Test that mean ratios are computed correctly."""
-    ds = Dataset().load_files([sample_liberty_path])
+    ds = Dataset().load_files([sample_liberty_file])
     vector = ds.to_vector()
 
     # Elements 0-3 are mean ratios (area, d0, k, leakage)
@@ -30,9 +30,9 @@ def test_to_vector_mean_ratios(sample_liberty_path):
     assert mean_k >= 0  # k can be 0 in some cases
 
 
-def test_to_vector_std_ratios(sample_liberty_path):
+def test_to_vector_std_ratios(sample_liberty_file):
     """Test that std ratios are included (elements 4-7)."""
-    ds = Dataset().load_files([sample_liberty_path])
+    ds = Dataset().load_files([sample_liberty_file])
     vector = ds.to_vector()
 
     # Elements 4-7 are std ratios
@@ -45,9 +45,9 @@ def test_to_vector_std_ratios(sample_liberty_path):
     assert std_leakage >= 0
 
 
-def test_to_vector_cell_ratios(sample_liberty_path):
+def test_to_vector_cell_ratios(sample_liberty_file):
     """Test that cell count ratios are between 0 and 1."""
-    ds = Dataset().load_files([sample_liberty_path])
+    ds = Dataset().load_files([sample_liberty_file])
     vector = ds.to_vector()
 
     # Elements 9-13 are ratios (combinational, sequential, inv, nand, dff)
@@ -77,9 +77,9 @@ def test_to_vector_empty_dataset():
     assert all(v == 0.0 for v in vector)
 
 
-def test_to_summary_dict_structure(sample_liberty_path):
+def test_to_summary_dict_structure(sample_liberty_file):
     """Test that to_summary_dict() has expected structure."""
-    ds = Dataset().load_files([sample_liberty_path])
+    ds = Dataset().load_files([sample_liberty_file])
     summary = ds.to_summary_dict()
 
     assert "library" in summary
@@ -101,9 +101,9 @@ def test_to_summary_dict_structure(sample_liberty_path):
     assert "mean" in summary["normalized_stats"]["area"]
 
 
-def test_to_summary_dict_cell_counts(sample_liberty_path):
+def test_to_summary_dict_cell_counts(sample_liberty_file):
     """Test that cell counts are consistent."""
-    ds = Dataset().load_files([sample_liberty_path])
+    ds = Dataset().load_files([sample_liberty_file])
     summary = ds.to_summary_dict()
 
     counts = summary["cell_counts"]
@@ -120,23 +120,13 @@ def test_to_summary_dict_empty_dataset():
     assert summary["error"] == "No entries loaded"
 
 
-def test_vector_comparison_same_library(sample_liberty_path):
+def test_vector_comparison_same_library(sample_liberty_file):
     """Test that same library produces identical vectors."""
-    ds1 = Dataset().load_files([sample_liberty_path])
-    ds2 = Dataset().load_files([sample_liberty_path])
+    ds1 = Dataset().load_files([sample_liberty_file])
+    ds2 = Dataset().load_files([sample_liberty_file])
 
     vec1 = ds1.to_vector()
     vec2 = ds2.to_vector()
 
     # Should be exactly equal
     assert vec1 == vec2
-
-
-@pytest.fixture
-def sample_liberty_path():
-    """Fixture providing path to sample liberty file."""
-    # Use existing test data
-    path = Path("testdata/example.lib")
-    if not path.exists():
-        pytest.skip(f"Test data not found: {path}")
-    return path
