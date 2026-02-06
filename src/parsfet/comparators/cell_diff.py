@@ -117,26 +117,32 @@ def compare_cell_coverage(
     )
 
 
+# Common foundry prefixes
+PREFIXES = [
+    "sky130_fd_sc_hd__",
+    "sky130_fd_sc_hs__",
+    "sky130_fd_sc_ms__",
+    "sky130_fd_sc_ls__",
+    "sky130_fd_sc_hdll__",
+    "asap7_",
+    "gf180mcu_",
+]
+
+# Pre-calculated lowercased prefixes to avoid repeated lower() calls
+PREFIX_TUPLES = [(p, p.lower()) for p in PREFIXES]
+
+
 def _normalize_cell_name(name: str) -> str:
     """Normalizes a cell name for robust comparison.
 
     Strips known foundry prefixes and Vt suffixes to isolate the core cell function name.
     e.g., 'sky130_fd_sc_hd__nand2_1' -> 'NAND2_1'.
     """
-    # Remove common foundry prefixes
-    prefixes = [
-        "sky130_fd_sc_hd__",
-        "sky130_fd_sc_hs__",
-        "sky130_fd_sc_ms__",
-        "sky130_fd_sc_ls__",
-        "sky130_fd_sc_hdll__",
-        "asap7_",
-        "gf180mcu_",
-    ]
-
     normalized = name
-    for prefix in prefixes:
-        if normalized.lower().startswith(prefix.lower()):
+    name_lower = name.lower()
+
+    for prefix, prefix_lower in PREFIX_TUPLES:
+        if name_lower.startswith(prefix_lower):
             normalized = normalized[len(prefix) :]
             break
 
