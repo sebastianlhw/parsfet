@@ -8,10 +8,20 @@ def sanitize_csv_field(value: Any) -> Any:
     """Sanitizes a field to prevent CSV Injection (Formula Injection).
 
     If the value is a string and starts with one of the trigger characters
-    (=, +, -, @), it prepends a single quote to force it to be treated as text.
+    (=, +, -, @), even after trimming whitespace, it prepends a single quote.
+    
+    Also, if the value already starts with a single quote, we leave it alone
+    to prevent double-quoting (optional fidelity improvement).
     """
-    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+    if not isinstance(value, str):
+        return value
+
+    if value.startswith("'"):
+        return value
+
+    if value.lstrip().startswith(("=", "+", "-", "@")):
         return f"'{value}"
+    
     return value
 
 
