@@ -1,7 +1,19 @@
 
 import csv
-from typing import TextIO
+from typing import TextIO, Any
 from parsfet.models.export import ExportedLibrary
+
+
+def sanitize_csv_field(value: Any) -> Any:
+    """Sanitizes a field to prevent CSV Injection (Formula Injection).
+
+    If the value is a string and starts with one of the trigger characters
+    (=, +, -, @), it prepends a single quote to force it to be treated as text.
+    """
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
 
 def generate_csv(library: ExportedLibrary, output_file: TextIO):
     """Generates a CSV export of the library data.
@@ -73,5 +85,8 @@ def generate_csv(library: ExportedLibrary, output_file: TextIO):
             cell.d0_ratio,
             cell.leakage_ratio,
         ]
-        
+
+        # Sanitize all fields in the row
+        row = [sanitize_csv_field(item) for item in row]
+
         writer.writerow(row)
