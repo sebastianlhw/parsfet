@@ -639,23 +639,17 @@ class Dataset:
         total_cells = summary.get("total_cells", 0)
 
         # Cell type distribution
+        # Note: Summary uses lowercase strings from CellType enum
         type_counts = summary.get("cell_type_counts", {})
-        combinational = total_cells - type_counts.get("sequential", 0)
-        sequential = type_counts.get("sequential", 0)
+        
+        sequential_count = type_counts.get("flip_flop", 0) + type_counts.get("latch", 0)
+        combinational_count = total_cells - sequential_count
 
-        # Functional type ratios (name-based heuristic)
-        inverter_count = 0
-        nand_count = 0
-        dff_count = 0
-
-        for cell_name in entry.library.cells.keys():
-            name_upper = cell_name.upper()
-            if "INV" in name_upper and "NAND" not in name_upper:
-                inverter_count += 1
-            if "NAND" in name_upper:
-                nand_count += 1
-            if "DFF" in name_upper or "SDFF" in name_upper:
-                dff_count += 1
+        # Functional type ratios
+        # Using specific CellType keys
+        inverter_count = type_counts.get("inverter", 0)
+        nand_count = type_counts.get("nand", 0)
+        dff_count = type_counts.get("flip_flop", 0)
 
         # Drive diversity
         min_area = get_stat("area_ratio_stats", "min")
@@ -672,8 +666,8 @@ class Dataset:
             std_k,
             std_leakage,
             float(total_cells) / 1000.0,  # Normalized cell count
-            float(combinational) / max(1, total_cells),
-            float(sequential) / max(1, total_cells),
+            float(combinational_count) / max(1, total_cells),
+            float(sequential_count) / max(1, total_cells),
             float(inverter_count) / max(1, total_cells),
             float(nand_count) / max(1, total_cells),
             float(dff_count) / max(1, total_cells),
@@ -712,19 +706,24 @@ class Dataset:
         # Extract cell counts
         total_cells = summary["total_cells"]
         type_counts = summary.get("cell_type_counts", {})
-        sequential = type_counts.get("sequential", 0)
+        
+        sequential = type_counts.get("flip_flop", 0) + type_counts.get("latch", 0)
         combinational = total_cells - sequential
 
-        # Functional type counts (name-based)
-        inverter_count = sum(1 for n in lib.cells if "INV" in n.upper() and "NAND" not in n.upper())
-        buffer_count = sum(1 for n in lib.cells if "BUF" in n.upper())
-        nand_count = sum(1 for n in lib.cells if "NAND" in n.upper())
-        nor_count = sum(1 for n in lib.cells if "NOR" in n.upper())
-        aoi_count = sum(1 for n in lib.cells if "AOI" in n.upper())
-        oai_count = sum(1 for n in lib.cells if "OAI" in n.upper())
-        mux_count = sum(1 for n in lib.cells if "MUX" in n.upper())
-        dff_count = sum(1 for n in lib.cells if "DFF" in n.upper() or "SDFF" in n.upper())
-        latch_count = sum(1 for n in lib.cells if "LAT" in n.upper())
+        # Functional type counts
+        # Map from CellType enum names (lowercase) to output schema
+        function_types = {
+            "inverter": type_counts.get("inverter", 0),
+            "buffer": type_counts.get("buffer", 0),
+            "and": type_counts.get("and", 0),
+            "or": type_counts.get("or", 0),
+            "nand": type_counts.get("nand", 0),
+            "nor": type_counts.get("nor", 0),
+            "xor": type_counts.get("xor", 0),
+            "xnor": type_counts.get("xnor", 0),
+            "dff": type_counts.get("flip_flop", 0),
+            "latch": type_counts.get("latch", 0),
+        }
 
         return {
             "library": lib.name,
@@ -760,17 +759,7 @@ class Dataset:
                 "combinational": combinational,
                 "sequential": sequential,
             },
-            "function_types": {
-                "inverter": inverter_count,
-                "buffer": buffer_count,
-                "nand": nand_count,
-                "nor": nor_count,
-                "aoi": aoi_count,
-                "oai": oai_count,
-                "mux": mux_count,
-                "dff": dff_count,
-                "latch": latch_count,
-            },
+            "function_types": function_types,
             "metadata": {
                 "process_node": lib.process_node,
                 "foundry": lib.foundry,
