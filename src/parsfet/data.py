@@ -305,7 +305,7 @@ class Dataset:
         # Filter to only cells appearing in multiple entries
         return {name: sources for name, sources in cell_sources.items() if len(sources) > 1}
 
-    def combine(self, allow_duplicates: bool = False) -> "Dataset":
+    def combine(self, allow_duplicates: bool = False, baseline: Optional[str] = None) -> "Dataset":
         """Combine all entries into ONE grand dataset with unified normalization.
 
         This method merges all cells from all loaded libraries (including
@@ -317,6 +317,9 @@ class Dataset:
             allow_duplicates: If False (default), raise DuplicateCellError when
                 cells with the same name appear in multiple files. If True,
                 first occurrence wins and later occurrences are ignored.
+            baseline: Optional. Name of the baseline cell to use.
+                If not provided, the normalizer tries to auto-detect "INVD1"
+                or similar standard inverters.
 
         Returns:
             A new Dataset with one unified LibraryEntry containing all cells.
@@ -387,7 +390,7 @@ class Dataset:
 
         # Create normalizer from combined library (finds baseline from all cells)
         try:
-            normalizer = INVD1Normalizer(combined_lib)
+            normalizer = INVD1Normalizer(combined_lib, baseline_name=baseline)
         except ValueError as e:
             raise ValueError(f"No baseline cell found in combined dataset: {e}") from e
 

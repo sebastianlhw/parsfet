@@ -582,6 +582,7 @@ def combine(
     allow_duplicates: bool = typer.Option(
         False, "--allow-duplicates", help="Allow duplicates (first wins)"
     ),
+    baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
 ):
     """Combines multiple Liberty or JSON files into one unified dataset.
 
@@ -604,6 +605,7 @@ def combine(
         output: Optional. Path to save the combined JSON output.
         check_duplicates: If True, only check for duplicates and report.
         allow_duplicates: If True, allow duplicate cells (first wins).
+        baseline: Optional. Name of the baseline cell to use.
 
     Examples:
         # Combine two Liberty libraries
@@ -663,7 +665,7 @@ def combine(
 
     # Combine with unified normalization
     try:
-        combined = ds.combine(allow_duplicates=allow_duplicates)
+        combined = ds.combine(allow_duplicates=allow_duplicates, baseline=baseline)
     except DuplicateCellError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)

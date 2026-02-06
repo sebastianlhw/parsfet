@@ -318,6 +318,24 @@ class TestCombine:
         assert "NOR2_X1" in metrics
         assert "BUF_X1" in metrics
 
+    def test_combine_explicit_baseline(self, lib1_file):
+        """Combining with explicit baseline should use that cell."""
+        ds = Dataset()
+        ds.load_files([lib1_file], normalize=False)
+
+        # INV_X1 is in lib1
+        combined = ds.combine(baseline="INV_X1")
+
+        assert combined.entries[0].normalizer.baseline_cell.name == "INV_X1"
+
+    def test_combine_explicit_baseline_missing(self, lib1_file):
+        """Combining with missing baseline should raise ValueError."""
+        ds = Dataset()
+        ds.load_files([lib1_file], normalize=False)
+
+        with pytest.raises(ValueError, match="No baseline cell found"):
+            ds.combine(baseline="MISSING_CELL")
+
 
 class TestDataFrameSourceFile:
     """Tests for source_file column in to_dataframe()."""
