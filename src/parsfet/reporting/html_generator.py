@@ -1,5 +1,6 @@
 
 import json
+import secrets
 import numpy as np
 from pathlib import Path
 from typing import Any
@@ -289,9 +290,15 @@ def generate_report(entries: list[Any], output_path: Path):
         .replace(">", "\\u003e") \
         .replace("&", "\\u0026")
     
+    # Generate nonce for CSP
+    nonce = secrets.token_hex(16)
+
     final_html = template_content.replace(
         "{{ lib_data_json }}", 
         json_str
+    ).replace(
+        "{{ csp_nonce }}",
+        nonce
     )
     
     output_path.write_text(final_html, encoding="utf-8")
