@@ -62,3 +62,6 @@ def test_csp_nonce_present(tmp_path):
         nonce_attr_match = re.search(r'nonce="([^"]+)"', tag_attr)
         assert nonce_attr_match, f"Inline script tag missing nonce attribute: <script{tag_attr}>"
         assert nonce_attr_match.group(1) == nonce_value, f"Script nonce mismatch: expected {nonce_value}, got {nonce_attr_match.group(1)}"
+
+    # 6. Verify Tailwind version pinning
+    assert 'src="https://cdn.tailwindcss.com/3.4.1"' in content, "Tailwind CSS should be pinned to version 3.4.1"
