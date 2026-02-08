@@ -39,8 +39,8 @@ def test_csp_nonce_present(tmp_path):
     # 3. Assert 'unsafe-inline' is NOT in script-src
     assert "'unsafe-inline'" not in script_src, "script-src should not contain 'unsafe-inline'"
 
-    # Assert 'unsafe-eval' IS in script-src (required for Alpine.js standard build)
-    assert "'unsafe-eval'" in script_src, "script-src should contain 'unsafe-eval' for Alpine.js"
+    # Assert 'unsafe-eval' is NOT in script-src (we switched to Alpine CSP build)
+    assert "'unsafe-eval'" not in script_src, "script-src should not contain 'unsafe-eval'"
 
     # 4. Extract nonce from script-src
     nonce_match = re.search(r"'nonce-([a-fA-F0-9]+)'", script_src)

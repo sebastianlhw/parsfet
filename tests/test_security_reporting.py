@@ -42,6 +42,7 @@ class MockMetrics:
 class MockNormalizer:
     baseline: MockBaseline = field(default_factory=MockBaseline)
     baseline_cell: MockCell = field(default_factory=lambda: MockCell(name="INV_X1"))
+    fo4_load: float = 0.004
 
     def normalize(self, cell):
         return MockMetrics()
@@ -104,3 +105,53 @@ def test_html_report_xss_prevention(tmp_path):
     # json.loads should decode \u003c back to <.
     found_name = data["libraries"][0]["cells"][0]["name"]
     assert found_name == malicious_payload
+
+def test_json_unicode_separators_escaped(tmp_path):
+    """Verifies that U+2028 and U+2029 are escaped to prevent JS syntax errors."""
+
+    # Payload with Line Separator and Paragraph Separator
+    payload_ls = "Line\u2028Break"
+    payload_ps = "Para\u2029Graph"
+
+    cell_ls = MockCell(name=payload_ls)
+    cell_ps = MockCell(name=payload_ps)
+
+    library = MockLibrary(name="UnicodeLib", cells={
+        payload_ls: cell_ls,
+        payload_ps: cell_ps
+    })
+
+    # Mock unit normalizer
+    class MockUnitNormalizer:
+        def normalize_time(self, t): return t
+        def normalize_capacitance(self, c): return c
+    library.unit_normalizer = MockUnitNormalizer()
+
+    entry = MockEntry(library=library, normalizer=MockNormalizer())
+
+    output_path = tmp_path / "unicode_report.html"
+    generate_report([entry], output_path)
+
+    content = output_path.read_text(encoding="utf-8")
+
+    # The literal characters should NOT be present in the HTML source
+    # (Because they are invalid in JS string literals)
+    assert "\u2028" not in content
+    assert "\u2029" not in content
+
+    # The escaped versions should be present
+    assert r"\u2028" in content
+    assert r"\u2029" in content
+
+    # Verify JSON validity
+    start_marker = "window.LIB_DATA = "
+    start_idx = content.find(start_marker)
+    end_marker = ";</script>"
+    end_idx = content.find(end_marker, start_idx)
+
+    json_str = content[start_idx + len(start_marker):end_idx]
+    data = json.loads(json_str)
+
+    names = [c["name"] for c in data["libraries"][0]["cells"]]
+    assert payload_ls in names
+    assert payload_ps in names
