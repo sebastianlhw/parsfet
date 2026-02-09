@@ -71,9 +71,9 @@
 
                 <!-- Library Switcher -->
                 <div class="mt-4" x-show="libraries.length > 1">
-                    <label class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Select Library</label>
+                    <label for="library-select" class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Select Library</label>
                     <div class="relative mt-1">
-                        <select
+                        <select id="library-select"
                             class="w-full bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
                             @change="switchLibrary($event.target.value)">
                             <template x-for="(lib, index) in libraries" :key="index">
@@ -227,7 +227,7 @@
                         <!-- Raw Matrix Table (Collapsible) -->
                         <details class="text-xs group pt-2 border-t border-slate-100" x-show="data.baseline_lut">
                             <summary
-                                class="cursor-pointer font-medium text-slate-500 hover:text-slate-700 select-none flex items-center gap-2 mb-2">
+                                class="cursor-pointer font-medium text-slate-500 hover:text-slate-700 select-none flex items-center gap-2 mb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded px-2 -ml-2">
                                 <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none"
                                     viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -273,9 +273,19 @@
             x-show="activeTab === 'browser'" class="h-full flex" x-transition.opacity>
             <!-- Filter List -->
             <aside class="w-80 bg-white border-r border-slate-200 flex flex-col z-10">
-                <div class="p-4 border-b border-slate-100">
-                    <input type="text" x-model="search" placeholder="Filter cells..."
-                        class="w-full px-4 py-2.5 rounded-lg bg-slate-50 border-slate-200 focus:bg-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all outline-none text-sm">
+                <div class="p-4 border-b border-slate-100 relative">
+                    <label for="cell-search" class="sr-only">Filter cells</label>
+                    <div class="relative">
+                        <input type="text" id="cell-search" x-model="search" x-ref="searchInput" placeholder="Filter cells..."
+                            class="w-full px-4 py-2.5 pr-10 rounded-lg bg-slate-50 border-slate-200 focus:bg-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all outline-none text-sm">
+                        <button type="button" x-show="search" @click="search = ''; $nextTick(() => $refs.searchInput.focus())"
+                            class="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 focus:outline-none focus:text-slate-600 transition-colors"
+                            aria-label="Clear search">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="flex-1 overflow-y-auto scroller p-2 space-y-1">
                     <template x-for="cell in filteredCells" :key="cell.name">
