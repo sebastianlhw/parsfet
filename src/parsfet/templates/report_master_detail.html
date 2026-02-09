@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' 'nonce-{{ csp_nonce }}' https://cdn.tailwindcss.com https://cdn.plot.ly https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'nonce-{{ csp_nonce }}' https://cdn.tailwindcss.com https://cdn.plot.ly https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';">
     <title>Pars-FET Library Report</title>
 
     <!-- Fonts: Inter for premium look -->
@@ -15,7 +15,7 @@
     <!-- Dependencies -->
     <script src="https://cdn.tailwindcss.com/3.4.1" nonce="{{ csp_nonce }}"></script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" nonce="{{ csp_nonce }}"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js" nonce="{{ csp_nonce }}"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/csp@3.13.3/dist/cdn.min.js" nonce="{{ csp_nonce }}"></script>
 
     <style>
         body {

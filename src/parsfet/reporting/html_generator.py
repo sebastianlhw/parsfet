@@ -288,7 +288,9 @@ def generate_report(entries: list[Any], output_path: Path):
     json_str = json.dumps(payload, default=str) \
         .replace("<", "\\u003c") \
         .replace(">", "\\u003e") \
-        .replace("&", "\\u0026")
+        .replace("&", "\\u0026") \
+        .replace("\u2028", "\\u2028") \
+        .replace("\u2029", "\\u2029")
     
     # Generate nonce for CSP
     nonce = secrets.token_hex(16)
