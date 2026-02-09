@@ -20,6 +20,7 @@ from typing import Optional
 import typer
 from rich import print as rprint
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -110,7 +111,7 @@ def parse(
         typer.Exit: If the file is not found or the format is unknown.
     """
     if not file.exists():
-        console.print(f"[red]Error:[/red] File not found: {file}")
+        console.print(f"[red]Error:[/red] File not found: {escape(str(file))}")
         raise typer.Exit(1)
 
     logger = logging.getLogger("parsfet.cli")
@@ -162,13 +163,13 @@ def parse(
         warnings = parser.validate(lib)
         if warnings:
             for w in warnings:
-                console.print(f"[yellow]Warning:[/yellow] {w}")
+                console.print(f"[yellow]Warning:[/yellow] {escape(str(w))}")
 
         # Output to JSON
         if output:
             data = lib.model_dump()
             output.write_text(json.dumps(data, indent=2, default=str))
-            console.print(f"[green]Saved to:[/green] {output}")
+            console.print(f"[green]Saved to:[/green] {escape(str(output))}")
 
     elif detected_format in ("lef", "techlef"):
         from .parsers.lef import LEFParser, TechLEFParser
@@ -212,10 +213,10 @@ def parse(
         if output:
             data = lef.model_dump()
             output.write_text(json.dumps(data, indent=2, default=str))
-            console.print(f"[green]Saved to:[/green] {output}")
+            console.print(f"[green]Saved to:[/green] {escape(str(output))}")
 
     else:
-        console.print(f"[red]Error:[/red] Unknown format: {detected_format}")
+        console.print(f"[red]Error:[/red] Unknown format: {escape(detected_format)}")
         raise typer.Exit(1)
 
 
@@ -259,7 +260,7 @@ def normalize(
         $ parsfet normalize my_lib.lib --lef cells.lef --tech-lef tech.lef -o combined.json
     """
     if not lib_file.exists():
-        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        console.print(f"[red]Error:[/red] File not found: {escape(str(lib_file))}")
         raise typer.Exit(1)
 
     # If LEF/TechLEF provided, use Dataset API for combined export
@@ -272,14 +273,14 @@ def normalize(
         if lef:
             for lef_path in lef:
                 if not lef_path.exists():
-                    console.print(f"[red]Error:[/red] LEF file not found: {lef_path}")
+                    console.print(f"[red]Error:[/red] LEF file not found: {escape(str(lef_path))}")
                     raise typer.Exit(1)
             ds.load_lef(lef)
             console.print(f"[blue]Loaded LEF:[/blue] {len(lef)} file(s)")
 
         if tech_lef:
             if not tech_lef.exists():
-                console.print(f"[red]Error:[/red] TechLEF file not found: {tech_lef}")
+                console.print(f"[red]Error:[/red] TechLEF file not found: {escape(str(tech_lef))}")
                 raise typer.Exit(1)
             ds.load_tech_lef(tech_lef)
             console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
@@ -317,7 +318,7 @@ def normalize(
 
         if output:
             ds.save_json(output)
-            console.print(f"[green]Saved combined data to:[/green] {output}")
+            console.print(f"[green]Saved combined data to:[/green] {escape(str(output))}")
 
     else:
         # Original Liberty-only flow
@@ -330,7 +331,7 @@ def normalize(
         try:
             normalizer = INVD1Normalizer(lib, baseline_name=baseline)
         except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
+            console.print(f"[red]Error:[/red] {escape(str(e))}")
             raise typer.Exit(1)
 
         summary = normalizer.get_summary()
@@ -355,7 +356,7 @@ def normalize(
         if output:
             data = normalizer.export_to_json()
             output.write_text(json.dumps(data, indent=2, default=str))
-            console.print(f"[green]Saved to:[/green] {output}")
+            console.print(f"[green]Saved to:[/green] {escape(str(output))}")
 
 
 @app.command()
@@ -380,7 +381,7 @@ def compare(
     """
     for f in [lib_a, lib_b]:
         if not f.exists():
-            console.print(f"[red]Error:[/red] File not found: {f}")
+            console.print(f"[red]Error:[/red] File not found: {escape(str(f))}")
             raise typer.Exit(1)
 
     from .comparators.cell_diff import compare_cell_coverage
@@ -455,7 +456,7 @@ def compare(
             else None,
         }
         output.write_text(json.dumps(data, indent=2, default=str))
-        console.print(f"[green]Saved to:[/green] {output}")
+        console.print(f"[green]Saved to:[/green] {escape(str(output))}")
 
 
 @app.command()
@@ -477,7 +478,7 @@ def fingerprint(
         typer.Exit: If the file is not found.
     """
     if not lib_file.exists():
-        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        console.print(f"[red]Error:[/red] File not found: {escape(str(lib_file))}")
         raise typer.Exit(1)
 
     from .data import Dataset
@@ -521,7 +522,7 @@ def fingerprint(
     if output:
         data = summary_dict
         output.write_text(json.dumps(data, indent=2, default=str))
-        console.print(f"[green]Saved to:[/green] {output}")
+        console.print(f"[green]Saved to:[/green] {escape(str(output))}")
 
 
 @app.command()
@@ -545,7 +546,7 @@ def export(
         typer.Exit: If the input file is not found.
     """
     if not lib_file.exists():
-        console.print(f"[red]Error:[/red] File not found: {lib_file}")
+        console.print(f"[red]Error:[/red] File not found: {escape(str(lib_file))}")
         raise typer.Exit(1)
 
     from .parsers.liberty import LibertyParser
@@ -563,7 +564,7 @@ def export(
             cell.pop("power_arcs", None)
 
     output.write_text(json.dumps(data, indent=2, default=str))
-    console.print(f"[green]Exported {len(lib.cells)} cells to:[/green] {output}")
+    console.print(f"[green]Exported {len(lib.cells)} cells to:[/green] {escape(str(output))}")
 
 
 @app.command()
@@ -627,7 +628,7 @@ def combine(
     # Validate files exist
     for f in lib_files:
         if not f.exists():
-            console.print(f"[red]Error:[/red] File not found: {f}")
+            console.print(f"[red]Error:[/red] File not found: {escape(str(f))}")
             raise typer.Exit(1)
 
     # Load files without immediate normalization
@@ -667,24 +668,24 @@ def combine(
     try:
         combined = ds.combine(allow_duplicates=allow_duplicates, baseline=baseline)
     except DuplicateCellError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise typer.Exit(1)
     except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]Error:[/red] {escape(str(e))}")
         raise typer.Exit(1)
 
     # Load LEF/TechLEF if provided
     if lef:
         for lef_path in lef:
             if not lef_path.exists():
-                console.print(f"[red]Error:[/red] LEF file not found: {lef_path}")
+                console.print(f"[red]Error:[/red] LEF file not found: {escape(str(lef_path))}")
                 raise typer.Exit(1)
         combined.load_lef(lef)
         console.print(f"[blue]Loaded LEF:[/blue] {len(lef)} file(s)")
 
     if tech_lef:
         if not tech_lef.exists():
-            console.print(f"[red]Error:[/red] TechLEF file not found: {tech_lef}")
+            console.print(f"[red]Error:[/red] TechLEF file not found: {escape(str(tech_lef))}")
             raise typer.Exit(1)
         combined.load_tech_lef(tech_lef)
         console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
@@ -706,7 +707,7 @@ def combine(
     # Save output
     if output:
         combined.save_json(output)
-        console.print(f"[green]Saved to:[/green] {output}")
+        console.print(f"[green]Saved to:[/green] {escape(str(output))}")
     elif not check_duplicates:
         console.print("[yellow]Tip:[/yellow] Use --output to save the combined data.")
 
@@ -722,7 +723,7 @@ def export_csv(
     suitable for analysis in Excel, Matlab, or Pandas.
     """
     if not input_file.exists():
-        console.print(f"[red]Error:[/red] File not found: {input_file}")
+        console.print(f"[red]Error:[/red] File not found: {escape(str(input_file))}")
         raise typer.Exit(1)
 
     from .models.export import ExportedLibrary
@@ -737,10 +738,10 @@ def export_csv(
         with open(output, "w", newline="") as f:
             generate_csv(library, f)
             
-        console.print(f"[green]Exported CSV to:[/green] {output}")
+        console.print(f"[green]Exported CSV to:[/green] {escape(str(output))}")
         
     except Exception as e:
-        console.print(f"[red]Error:[/red] Failed to export CSV: {e}")
+        console.print(f"[red]Error:[/red] Failed to export CSV: {escape(str(e))}")
         # raise  # Uncomment for debug trace
         raise typer.Exit(1)
 
@@ -760,9 +761,9 @@ def report(
 
     The report allows verifying the fit quality (R²) and inspecting outliers (red items).
     """
-    for f in lib_files:
+    for f in [lib_files] if isinstance(lib_files, Path) else lib_files:
         if not f.exists():
-            console.print(f"[red]Error:[/red] File not found: {f}")
+            console.print(f"[red]Error:[/red] File not found: {escape(str(f))}")
             raise typer.Exit(1)
 
     if not output:
@@ -789,7 +790,7 @@ def report(
                 combined_ds = ds.combine(allow_duplicates=allow_duplicates)
                 entries_to_report = combined_ds.entries
             except DuplicateCellError as e:
-                console.print(f"[red]Error:[/red] {e}")
+                console.print(f"[red]Error:[/red] {escape(str(e))}")
                 console.print("[yellow]Hint:[/yellow] Use --allow-duplicates to force merge (first wins).")
                 raise typer.Exit(1)
         
@@ -810,13 +811,13 @@ def report(
              for entry in entries_to_report:
                  entry.normalizer = INVD1Normalizer(entry.library, baseline_name=baseline)
         
-        console.print(f"Generating report to {output}...")
+        console.print(f"Generating report to {escape(str(output))}...")
         generate_report(entries_to_report, output)
         
-        console.print(f"[green]Report generated:[/green] {output}")
+        console.print(f"[green]Report generated:[/green] {escape(str(output))}")
 
     except Exception as e:
-        console.print(f"[red]Error:[/red] Failed to generate report: {e}")
+        console.print(f"[red]Error:[/red] Failed to generate report: {escape(str(e))}")
         # raise  # Uncomment for debug
         raise typer.Exit(1)
 
