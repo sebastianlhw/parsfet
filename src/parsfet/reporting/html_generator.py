@@ -80,6 +80,27 @@ def interpolate_1d_at_load(table, target_load):
     return list(table.index_1), output_slews
 
 
+def validate_assets():
+    """Checks if all required static assets for the HTML report are present.
+
+    Raises:
+        RuntimeError: If any mandatory assets are missing.
+    """
+    static_dir = Path(__file__).parent.parent / "static"
+    required_assets = [
+        "css/styles.css",
+        "js/alpine.min.js",
+        "js/plotly.min.js"
+    ]
+    missing = [a for a in required_assets if not (static_dir / a).exists()]
+    if missing:
+        missing_str = ", ".join(missing)
+        raise RuntimeError(
+            f"Missing required report assets: {missing_str}\n"
+            "Please run 'npm install && npm run build' in the project root to generate them."
+        )
+
+
 def generate_report(entries: list[Any], output_path: Path):
     """Generates the interactive HTML report for one or more libraries.
 
@@ -87,6 +108,8 @@ def generate_report(entries: list[Any], output_path: Path):
         entries: List of DatasetEntry objects (from parsfet.data).
         output_path: Path to write the HTML file.
     """
+    # 0. Preliminary Check
+    validate_assets()
 
     # 1. Build Data Structure
     libraries_data = []
