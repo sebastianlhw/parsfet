@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Scrollbar Styles from original template */
+.scroller::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scroller::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.scroller::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.glass-panel {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(8px);
+}
+
+[x-cloak] {
+    display: none !important;
+}

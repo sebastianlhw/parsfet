@@ -292,8 +292,30 @@ def generate_report(entries: list[Any], output_path: Path):
     # Generate nonce for CSP
     nonce = secrets.token_hex(16)
 
-    final_html = template_content.replace("{{ lib_data_json }}", json_str).replace(
-        "{{ csp_nonce }}", nonce
+    # Load Static Assets
+    static_dir = Path(__file__).parent.parent / "static"
+    
+    def load_asset(rel_path):
+        p = static_dir / rel_path
+        if not p.exists():
+            print(f"Warning: Asset not found: {p}")
+            return ""
+        content_bytes = p.read_bytes()
+        
+        return content_bytes.decode("utf-8")
+
+    css_content = load_asset("css/styles.css")
+    js_alpine = load_asset("js/alpine.min.js")
+    js_plotly = load_asset("js/plotly.min.js")
+
+    # Security Manifest removed as per collaborative review (redundant with package-lock.json)
+
+    final_html = (
+        template_content.replace("{{ lib_data_json }}", json_str)
+        .replace("{{ csp_nonce }}", nonce)
+        .replace("{{ css_content }}", css_content)
+        .replace("{{ js_alpine }}", js_alpine)
+        .replace("{{ js_plotly }}", js_plotly)
     )
 
     output_path.write_text(final_html, encoding="utf-8")

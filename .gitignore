@@ -212,3 +212,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Node.js dependencies
+node_modules/
+
+# Generated Static Assets (Frontend)
+# These are built via `npm run build` or `copy_assets.js`
+src/parsfet/static/css/styles.css
+src/parsfet/static/js/alpine.min.js
+src/parsfet/static/js/plotly.min.js
