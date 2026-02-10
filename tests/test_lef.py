@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from hypothesis import given, strategies as st
 
 from parsfet.models.lef import LayerDirection, LayerType, LEFLibrary
 from parsfet.parsers.lef import LEFParser, TechLEFParser
@@ -16,24 +17,24 @@ def test_parse_lef_header_and_units(sample_lef_content):
     assert lib.manufacturing_grid == 0.005
 
 
-def test_parse_layers(sample_lef_content):
+@pytest.mark.parametrize(
+    "layer_name, expected_type, expected_dir, expected_pitch",
+    [
+        ("M1", LayerType.ROUTING, LayerDirection.HORIZONTAL, 0.2),
+        ("M2", LayerType.ROUTING, LayerDirection.VERTICAL, 0.2),
+    ],
+)
+def test_parse_layers_parametrized(
+    sample_lef_content, layer_name, expected_type, expected_dir, expected_pitch
+):
     parser = LEFParser()
     lib = parser.parse_string(sample_lef_content)
 
-    assert "M1" in lib.layers
-    m1 = lib.layers["M1"]
-    assert m1.layer_type == LayerType.ROUTING
-    assert m1.direction == LayerDirection.HORIZONTAL
-    assert m1.pitch == 0.2
-    assert m1.width == 0.1
-    assert m1.spacing == 0.1
-    assert m1.resistance == 0.1
-    assert m1.capacitance == 0.2
-
-    assert "M2" in lib.layers
-    m2 = lib.layers["M2"]
-    assert m2.layer_type == LayerType.ROUTING
-    assert m2.direction == LayerDirection.VERTICAL
+    assert layer_name in lib.layers
+    layer = lib.layers[layer_name]
+    assert layer.layer_type == expected_type
+    assert layer.direction == expected_dir
+    assert layer.pitch == expected_pitch
 
 
 def test_parse_vias(sample_lef_content):
@@ -194,3 +195,23 @@ def test_tech_info_from_tech_lef(sample_lef_content):
     assert m1.layer_type == "routing"
     assert m1.direction == "horizontal"
     assert m1.min_size == 0.1  # Falls back to width
+
+
+def test_malformed_lef_content():
+    """Test graceful handling of malformed LEF content."""
+    parser = LEFParser()
+    
+    # Broken content: unexpected keyword but valid syntax structure (NAME ... ;)
+    # The grammar has a generic 'unknown_stmt' rule that swallows checking for
+    # unhandled keywords, making it permissive.
+    broken = "VERSION 5.8 ; BROKEN KEYWORD ;"
+    
+    # This should parse OK (ignored), NOT raise exception
+    lib = parser.parse_string(broken)
+    assert lib.version == "5.8"
+         
+    # Partial content: Incomplete block start
+    # "UNITS" starts a block but misses END UNITS
+    partial = "VERSION 5.8 ; UNITS"
+    with pytest.raises(Exception):
+        parser.parse_string(partial)

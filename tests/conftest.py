@@ -3,6 +3,13 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
+
+
+@pytest.fixture
+def runner():
+    """Fixture for Typer CLI runner."""
+    return CliRunner()
 
 
 @pytest.fixture
