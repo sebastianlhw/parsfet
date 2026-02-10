@@ -75,7 +75,6 @@ def test_csp_nonce_present(tmp_path):
 
     # 7. Verify Security Manifest (Comment only now)
     assert "Security Manifest: Verified via package-lock.json" in content, "Security Manifest comment should be present"
-    # Manifest listing is removed, only the comment header remains.
-    # assert "styles.css:" in content, "Manifest should list styles.css"
-    # assert "alpine.min.js:" in content, "Manifest should list alpine.min.js"
-    # assert "plotly.min.js:" in content, "Manifest should list plotly.min.js"
+
+    # 8. Verify Referrer Policy
+    assert '<meta name="referrer" content="no-referrer">' in content, "Referrer meta tag missing"
