@@ -1,6 +1,9 @@
 from pathlib import Path
+import math
 
 import pytest
+from hypothesis import given, strategies as st, settings
+from hypothesis import example
 
 from parsfet.models.liberty import Cell, LibertyLibrary, LookupTable
 from parsfet.parsers.liberty import LibertyParser
@@ -68,21 +71,35 @@ def test_timing_arcs_and_lut(sample_liberty_content):
     assert len(arc.cell_rise.values[0]) == 5
 
 
-def test_lut_interpolation_1d():
+@pytest.mark.parametrize(
+    "x, expected",
+    [
+        (0.1, 0.1),  # Exact match (min)
+        (0.5, 0.5),  # Exact match (mid)
+        (1.0, 1.0),  # Exact match (max)
+        (0.3, 0.3),  # Interpolation
+        (0.0, 0.1),  # Extrapolation (clamped low)
+        (2.0, 1.0),  # Extrapolation (clamped high - assumption: clamped to nearest)
+    ],
+)
+def test_lut_interpolation_1d_cases(x, expected):
+    """Parametrized tests for 1D interpolation."""
     lut = LookupTable(index_1=[0.1, 0.5, 1.0], values=[0.1, 0.5, 1.0])
-
-    # Exact match
-    assert lut.interpolate(0.5) == 0.5
-
-    # Interpolation
-    assert pytest.approx(lut.interpolate(0.3)) == 0.3
-
-    # Extrapolation (clamping)
-    assert lut.interpolate(0.0) == 0.1
-    assert lut.interpolate(2.0) == 1.0
+    assert pytest.approx(lut.interpolate(x)) == expected
 
 
-def test_lut_interpolation_2d():
+@pytest.mark.parametrize(
+    "x, y, expected",
+    [
+        (0.0, 0.0, 0.0),  # Corner 0,0
+        (1.0, 1.0, 2.0),  # Corner 1,1
+        (0.5, 0.5, 1.0),  # Center
+        (0.5, 0.0, 0.5),  # Edge mid
+        (0.0, 0.5, 0.5),  # Edge mid
+    ],
+)
+def test_lut_interpolation_2d_cases(x, y, expected):
+    """Parametrized tests for 2D interpolation."""
     # Simple bilinear surface: z = x + y
     lut = LookupTable(
         index_1=[0.0, 1.0],
@@ -92,17 +109,64 @@ def test_lut_interpolation_2d():
             [1.0, 2.0],  # x=1: z=1, z=2
         ],
     )
+    assert pytest.approx(lut.interpolate(x, y)) == expected
 
-    # Corners
-    assert lut.interpolate(0.0, 0.0) == 0.0
-    assert lut.interpolate(1.0, 1.0) == 2.0
 
-    # Center
-    assert pytest.approx(lut.interpolate(0.5, 0.5)) == 1.0
+@given(st.floats(min_value=0.1, max_value=1.0))
+def test_lut_interpolation_1d_hypothesis(x):
+    """Property-based test: Multi-linear interpolation on f(x)=x should recover x."""
+    lut = LookupTable(
+        index_1=[0.1, 0.5, 1.0],
+        values=[0.1, 0.5, 1.0]
+    )
+    result = lut.interpolate(x)
+    assert pytest.approx(result) == x
 
-    # Edges
-    assert pytest.approx(lut.interpolate(0.5, 0.0)) == 0.5
-    assert pytest.approx(lut.interpolate(0.0, 0.5)) == 0.5
+
+@given(
+    load=st.floats(min_value=0.001, max_value=1.0),
+    slew=st.floats(min_value=0.01, max_value=1.0)
+)
+def test_lut_monotonicity_hypothesis(load, slew):
+    """
+    Property: For a physically standard LUT (delay increases with load and slew),
+    interpolation should preserve monotonicity.
+    """
+    # Create a synthetic delay table where delay = slew + load
+    # index_1 = slew, index_2 = load
+    # values[i][j] = index_1[i] + index_2[j]
+    
+    slews = [0.01, 0.1, 0.5, 1.0]
+    loads = [0.001, 0.01, 0.1, 0.5, 1.0]
+    
+    values = []
+    for s in slews:
+        row = []
+        for l in loads:
+            row.append(s + l)
+        values.append(row)
+            
+    lut = LookupTable(
+        index_1=slews,
+        index_2=loads,
+        values=values
+    )
+    
+    val = lut.interpolate(slew, load)
+    assert val > 0
+    
+    # Check local monotonicity with a small delta
+    delta = 0.0001
+    
+    # Increase slew -> delay should increase
+    if slew + delta <= 1.0:
+        val_next_slew = lut.interpolate(slew + delta, load)
+        assert val_next_slew >= val
+        
+    # Increase load -> delay should increase
+    if load + delta <= 1.0:
+        val_next_load = lut.interpolate(slew, load + delta)
+        assert val_next_load >= val
 
 
 def test_parse_from_file(sample_liberty_file):
@@ -110,10 +174,7 @@ def test_parse_from_file(sample_liberty_file):
     lib = parser.parse(sample_liberty_file)
     assert (
         lib.name == "test_lib"
-    )  # Name comes from content parsing, but if parse_string is called, it might use file stem if name not in file?
-    # Actually parser.parse passes name=path.stem. But inside parse_string, if _qualifier is found, it overrides.
-    # In our sample content: library(test_lib). So name should be test_lib.
-
+    ) 
     assert "INV_X1" in lib.cells
 
 
@@ -154,7 +215,6 @@ def test_fo4_calculation(sample_liberty_content):
 
     assert pytest.approx(load) == 0.008
     # Slew should be calculated based on this load.
-    # Since 0.008 is small (between 0.001 and 0.01 in index_2), it will interpolate.
     assert slew > 0
 
 
@@ -174,8 +234,6 @@ def test_linear_model_fit():
 
 def test_missing_baseline_cell(sample_liberty_content):
     # Rename INV_X1 to OTHER_X1.
-    # Since OTHER_X1 is logically an inverter (has function !A),
-    # the classifier should identify it as an inverter and use it as baseline.
     content = sample_liberty_content.replace("cell(INV_X1)", "cell(OTHER_X1)")
     parser = LibertyParser()
     lib = parser.parse_string(content)
@@ -189,10 +247,37 @@ def test_missing_baseline_cell(sample_liberty_content):
     lib_buf = parser.parse_string(content_buf)
 
     # Now it's a buffer, so no baseline inverter should be found
-    # (assuming no other cells)
     assert lib_buf.baseline_cell is None
 
     # Should still calculate a fallback operating point
     slew, load = lib_buf.fo4_operating_point()
     assert slew > 0
     assert load > 0
+
+
+def test_json_round_trip(sample_liberty_content):
+    """Test round-trip serialization: Parse -> Dict -> Object."""
+    parser = LibertyParser()
+    original_lib = parser.parse_string(sample_liberty_content)
+    
+    # Dump to dict (JSON-like)
+    data = original_lib.model_dump()
+    
+    # Reconstruct from dict
+    restored_lib = LibertyLibrary(**data)
+    
+    # Verify key attributes equality
+    assert restored_lib.name == original_lib.name
+    assert restored_lib.technology == original_lib.technology
+    assert restored_lib.time_unit == original_lib.time_unit
+    
+    # Verify deep structure (cells)
+    assert len(restored_lib.cells) == len(original_lib.cells)
+    assert "INV_X1" in restored_lib.cells
+    
+    inv_orig = original_lib.cells["INV_X1"]
+    inv_rest = restored_lib.cells["INV_X1"]
+    
+    assert inv_rest.area == inv_orig.area
+    assert len(inv_rest.pins) == len(inv_orig.pins)
+    assert inv_rest.pins["Y"].function == inv_orig.pins["Y"].function
