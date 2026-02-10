@@ -1,0 +1,3 @@
+## 2025-01-29 - Power User Shortcuts in Data Dashboards
+**Learning:** In data-dense applications like this library characterization report, users often know exactly what they are looking for (e.g., a specific cell name). Requiring them to navigate via mouse or tab-key through complex DOM structures (like charts and sidebars) causes friction.
+**Action:** Implementing global keyboard shortcuts (e.g., `/` to search, `Cmd+K` as a standard alternative) significantly reduces this friction. It transforms the "Cell Browser" from a passive list into an active lookup tool, enhancing the "app-like" feel of static HTML reports. Always pair this with a visual cue (like placeholder text) so the feature is discoverable.
