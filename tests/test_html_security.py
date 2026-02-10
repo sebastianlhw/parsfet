@@ -7,7 +7,10 @@ from parsfet.data import LibraryEntry
 from parsfet.models.liberty import LibertyLibrary, Cell
 from parsfet.normalizers.invd1 import INVD1Normalizer
 
-def test_csp_nonce_present(tmp_path):
+from unittest.mock import patch
+
+@patch("parsfet.reporting.html_generator.validate_assets")
+def test_csp_nonce_present(mock_validate, tmp_path):
     """Verifies that the generated HTML report uses a nonce for CSP and avoids unsafe-inline for scripts."""
 
     # Create a minimal dummy library/entry
