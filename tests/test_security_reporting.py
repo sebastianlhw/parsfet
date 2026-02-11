@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any
 
 from parsfet.reporting.html_generator import generate_report
+from unittest.mock import patch
 
 # Mocks for the test to avoid full dependency on library parsing
 @dataclass
@@ -52,7 +53,8 @@ class MockEntry:
     library: MockLibrary
     normalizer: MockNormalizer
 
-def test_html_report_xss_prevention(tmp_path):
+@patch("parsfet.reporting.html_generator.validate_assets")
+def test_html_report_xss_prevention(mock_validate, tmp_path):
     """Verifies that malicious payloads in cell names are escaped in the HTML report."""
 
     # Payload that would break out of script tag if unescaped
@@ -106,7 +108,8 @@ def test_html_report_xss_prevention(tmp_path):
     found_name = data["libraries"][0]["cells"][0]["name"]
     assert found_name == malicious_payload
 
-def test_json_unicode_separators_escaped(tmp_path):
+@patch("parsfet.reporting.html_generator.validate_assets")
+def test_json_unicode_separators_escaped(mock_validate, tmp_path):
     """Verifies that U+2028 and U+2029 are escaped to prevent JS syntax errors."""
 
     # Payload with Line Separator and Paragraph Separator

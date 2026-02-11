@@ -17,9 +17,22 @@ A Python-based framework for parsing semiconductor technology files (`.lib`, `.l
 
 ## Installation
 
-```bash
-pip install -e .
-```
+### From Source (Git Clone)
+
+If HTML report is needed, you must build the frontend assets for `parsfet report`:
+
+1.  **Install Node.js** (LTS version).
+2.  **Build Assets**:
+    ```bash
+    npm install
+    npm run build
+    ```
+Otherwise, you can skip above and only run this.
+
+3.  **Install Package**:
+    ```bash
+    uv pip install -e .
+    ```
 
 ## Quick Start: Visualization
 

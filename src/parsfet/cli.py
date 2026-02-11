@@ -770,10 +770,13 @@ def report(
         output = lib_files[0].with_suffix(".html")
 
     from .data import Dataset
-    from .reporting.html_generator import generate_report
+    from .reporting.html_generator import generate_report, validate_assets
     from .exceptions import DuplicateCellError
 
     try:
+        # Check for assets BEFORE parsing to save time and give immediate feedback
+        validate_assets()
+
         console.print(f"Loading {len(lib_files)} libraries...")
         
         # Use Dataset API to load and normalize all libraries consistently
@@ -815,6 +818,9 @@ def report(
         
         console.print(f"[green]Report generated:[/green] {output}")
 
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]Error:[/red] Failed to generate report: {e}")
         # raise  # Uncomment for debug

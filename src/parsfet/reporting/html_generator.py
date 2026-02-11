@@ -80,6 +80,27 @@ def interpolate_1d_at_load(table, target_load):
     return list(table.index_1), output_slews
 
 
+def validate_assets():
+    """Checks if all required static assets for the HTML report are present.
+
+    Raises:
+        RuntimeError: If any mandatory assets are missing.
+    """
+    static_dir = Path(__file__).parent.parent / "static"
+    required_assets = [
+        "css/styles.css",
+        "js/alpine.min.js",
+        "js/plotly.min.js"
+    ]
+    missing = [a for a in required_assets if not (static_dir / a).exists()]
+    if missing:
+        missing_str = ", ".join(missing)
+        raise RuntimeError(
+            f"Missing required report assets: {missing_str}\n"
+            "Please run 'npm install && npm run build' in the project root to generate them."
+        )
+
+
 def generate_report(entries: list[Any], output_path: Path):
     """Generates the interactive HTML report for one or more libraries.
 
@@ -87,6 +108,8 @@ def generate_report(entries: list[Any], output_path: Path):
         entries: List of DatasetEntry objects (from parsfet.data).
         output_path: Path to write the HTML file.
     """
+    # 0. Preliminary Check
+    validate_assets()
 
     # 1. Build Data Structure
     libraries_data = []
@@ -292,8 +315,30 @@ def generate_report(entries: list[Any], output_path: Path):
     # Generate nonce for CSP
     nonce = secrets.token_hex(16)
 
-    final_html = template_content.replace("{{ lib_data_json }}", json_str).replace(
-        "{{ csp_nonce }}", nonce
+    # Load Static Assets
+    static_dir = Path(__file__).parent.parent / "static"
+    
+    def load_asset(rel_path):
+        p = static_dir / rel_path
+        if not p.exists():
+            print(f"Warning: Asset not found: {p}")
+            return ""
+        content_bytes = p.read_bytes()
+        
+        return content_bytes.decode("utf-8")
+
+    css_content = load_asset("css/styles.css")
+    js_alpine = load_asset("js/alpine.min.js")
+    js_plotly = load_asset("js/plotly.min.js")
+
+    # Security Manifest removed as per collaborative review (redundant with package-lock.json)
+
+    final_html = (
+        template_content.replace("{{ lib_data_json }}", json_str)
+        .replace("{{ csp_nonce }}", nonce)
+        .replace("{{ css_content }}", css_content)
+        .replace("{{ js_alpine }}", js_alpine)
+        .replace("{{ js_plotly }}", js_plotly)
     )
 
     output_path.write_text(final_html, encoding="utf-8")

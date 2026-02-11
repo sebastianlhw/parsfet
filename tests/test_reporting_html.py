@@ -3,7 +3,7 @@ import pytest
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from parsfet.reporting.html_generator import generate_report
 from parsfet.models.liberty import LibertyLibrary, Cell
@@ -71,7 +71,8 @@ def mock_cell():
     
     return cell
 
-def test_generate_report_structure(tmp_path, mock_library, mock_cell):
+@patch("parsfet.reporting.html_generator.validate_assets")
+def test_generate_report_structure(mock_validate, tmp_path, mock_library, mock_cell):
     """Test standard report generation with mocked data."""
     output_file = tmp_path / "report.html"
     
@@ -110,7 +111,8 @@ def test_generate_report_structure(tmp_path, mock_library, mock_cell):
     assert cell_data["delay_r2"] == 0.99
     assert cell_data["power_r2"] == 0.95
 
-def test_generate_report_empty_entries(tmp_path):
+@patch("parsfet.reporting.html_generator.validate_assets")
+def test_generate_report_empty_entries(mock_validate, tmp_path):
     """Verify behavior with no entries."""
     output_file = tmp_path / "empty_report.html"
     generate_report([], output_file)

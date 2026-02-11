@@ -47,6 +47,17 @@ parsfet = "parsfet.cli:app"
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/parsfet/static",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/parsfet"]
+include = [
+    "src/parsfet/static",
+]
+
 [tool.hatch.version]
 source = "vcs"
 
