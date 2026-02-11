@@ -21,7 +21,7 @@ def setup_logging(quiet: bool = False) -> None:
             level=level,
             format="%(message)s",
             datefmt="[%X]",
-            handlers=[RichHandler(rich_tracebacks=True, markup=True)],
+            handlers=[RichHandler(rich_tracebacks=True, markup=False)],
         )
     else:
         # Update level if already configured
