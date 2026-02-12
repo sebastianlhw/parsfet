@@ -10,6 +10,10 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from parsfet.reporting.html_generator import generate_report
 from parsfet.models.liberty import LibertyLibrary, Cell
+
+# Gracefully handle missing playwright for CI environments
+import pytest
+playwright = pytest.importorskip("playwright")
 from playwright.sync_api import Page, expect
 
 # --- Minimal Mocks ---
