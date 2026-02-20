@@ -32,6 +32,16 @@ from .normalizers.invd1 import INVD1Normalizer, NormalizedMetrics
 from .parsers.lef import LEFParser, TechLEFParser
 from .parsers.liberty import LibertyParser
 
+# Re-export path-delay public types so ``from parsfet.data import ...`` still works.
+from .path_delay import (
+    WireLoadModel,
+    PathSpec,
+    AnalysisConfig,
+    TimingPath,
+    TimingPoint,
+    estimate_path_delay as _estimate_path_delay_impl,
+)
+
 if TYPE_CHECKING:
     from .models.lef import LEFLibrary, TechLEF
     from .models.liberty import LibertyLibrary
@@ -48,6 +58,8 @@ FEATURE_COLUMNS = [
     "num_outputs",
     "is_sequential",
 ]
+
+
 
 
 @dataclass
@@ -459,7 +471,9 @@ class Dataset:
         - cell: Cell name
         - cell_type: Classified cell type (inverter, nand, etc.)
         - Ratio columns: area_ratio, d0_ratio, k_ratio, etc.
-        - Raw metric columns: raw_area_um2, raw_d0_ns, etc.
+        - Raw metric columns: raw_area_um2, raw_d0_ns, raw_k_ns_per_pf,
+          raw_leakage, raw_input_cap_pf
+        - Fit quality: fit_r_squared (R² of linear model), fit_residual_pct
         - Context: voltage, temperature, process_node
         - LEF columns (if loaded): lef_width, lef_height, lef_area, pin_layers_json
         - TechLEF columns (if loaded): metal_stack_height
@@ -503,6 +517,9 @@ class Dataset:
                     "num_inputs": m.num_inputs,
                     "num_outputs": m.num_outputs,
                     "is_sequential": m.is_sequential,
+                    # Fit quality — reliability of the linear model for this cell
+                    "fit_r_squared": m.fit_r_squared,
+                    "fit_residual_pct": m.fit_residual_pct,
                     # Library context
                     "voltage": lib.nom_voltage,
                     "temperature": lib.nom_temperature,
@@ -673,6 +690,17 @@ class Dataset:
             float(dff_count) / max(1, total_cells),
             drive_diversity,
         ]
+
+    def estimate_path_delay(
+        self,
+        path: list["PathSpec"],
+        config: "AnalysisConfig | None" = None,
+    ) -> "TimingPath":
+        """Convenience shim — delegates to :func:`parsfet.path_delay.estimate_path_delay`.
+
+        See that function for full documentation and examples.
+        """
+        return _estimate_path_delay_impl(self, path, config)
 
     def to_summary_dict(self, entry_index: int = 0) -> dict:
         """Generate a fingerprint-like summary dictionary.

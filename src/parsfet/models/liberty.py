@@ -626,6 +626,26 @@ class LibertyLibrary(BaseModel):
         return UnitNormalizer(time_unit=self.time_unit, cap_unit=self.capacitive_load_unit)
 
     @property
+    def time_unit_ns(self) -> float:
+        """Scale factor: multiply a raw arc table time value to get nanoseconds.
+
+        Examples: 0.001 for a library using ps (ASAP7), 1.0 for a library using ns.
+        This is the stable public API for unit-aware arc table access — prefer this
+        over ``unit_normalizer.time_multiplier`` in external code.
+        """
+        return self.unit_normalizer.time_multiplier
+
+    @property
+    def cap_unit_pf(self) -> float:
+        """Scale factor: multiply a raw arc table capacitance value to get picofarads.
+
+        Examples: 0.001 for a library using fF (ASAP7), 1.0 for a library using pF.
+        This is the stable public API for unit-aware arc table access — prefer this
+        over ``unit_normalizer.cap_multiplier`` in external code.
+        """
+        return self.unit_normalizer.cap_multiplier
+
+    @property
     def baseline_cell(self) -> Optional[Cell]:
         """Identifies and returns the baseline inverter (INVD1) for normalization.
 
