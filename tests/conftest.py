@@ -67,6 +67,13 @@ def sample_liberty_content():
         }
       }
 
+      lu_table_template(constraint_template_3x3) {
+        variable_1 : constrained_pin_transition;
+        variable_2 : related_pin_transition;
+        index_1 ("0.01, 0.1, 1.0");
+        index_2 ("0.01, 0.1, 1.0");
+      }
+
       cell(DFF_X1) {
         area : 4.0;
         ff("IQ", "IQN") {
@@ -76,6 +83,34 @@ def sample_liberty_content():
         pin(D) {
             direction : input;
             capacitance : 0.003;
+            timing() {
+              related_pin : "CLK";
+              timing_type : setup_rising;
+              rise_constraint(constraint_template_3x3) {
+                values("0.020, 0.022, 0.030", \
+                       "0.025, 0.027, 0.035", \
+                       "0.040, 0.042, 0.050");
+              }
+              fall_constraint(constraint_template_3x3) {
+                values("0.018, 0.020, 0.028", \
+                       "0.023, 0.025, 0.033", \
+                       "0.038, 0.040, 0.048");
+              }
+            }
+            timing() {
+              related_pin : "CLK";
+              timing_type : hold_rising;
+              rise_constraint(constraint_template_3x3) {
+                values("-0.005, -0.003, 0.000", \
+                       "-0.003, -0.001, 0.002", \
+                       " 0.000,  0.002, 0.005");
+              }
+              fall_constraint(constraint_template_3x3) {
+                values("-0.004, -0.002, 0.001", \
+                       "-0.002,  0.000, 0.003", \
+                       " 0.001,  0.003, 0.006");
+              }
+            }
         }
         pin(CLK) {
             direction : input;
@@ -85,6 +120,38 @@ def sample_liberty_content():
         pin(Q) {
             direction : output;
             function : "IQ";
+            timing() {
+              related_pin : "CLK";
+              timing_type : rising_edge;
+              cell_rise(delay_template_5x5) {
+                values("0.08, 0.09, 0.11, 0.18, 0.28", \
+                       "0.09, 0.10, 0.12, 0.19, 0.29", \
+                       "0.11, 0.12, 0.14, 0.21, 0.31", \
+                       "0.18, 0.19, 0.21, 0.28, 0.38", \
+                       "0.28, 0.29, 0.31, 0.38, 0.48");
+              }
+              cell_fall(delay_template_5x5) {
+                values("0.07, 0.08, 0.10, 0.17, 0.27", \
+                       "0.08, 0.09, 0.11, 0.18, 0.28", \
+                       "0.10, 0.11, 0.13, 0.20, 0.30", \
+                       "0.17, 0.18, 0.20, 0.27, 0.37", \
+                       "0.27, 0.28, 0.30, 0.37, 0.47");
+              }
+              rise_transition(delay_template_5x5) {
+                values("0.03, 0.04, 0.05, 0.08, 0.13", \
+                       "0.04, 0.05, 0.06, 0.09, 0.14", \
+                       "0.05, 0.06, 0.07, 0.10, 0.15", \
+                       "0.08, 0.09, 0.10, 0.13, 0.18", \
+                       "0.13, 0.14, 0.15, 0.18, 0.23");
+              }
+              fall_transition(delay_template_5x5) {
+                values("0.02, 0.03, 0.04, 0.07, 0.12", \
+                       "0.03, 0.04, 0.05, 0.08, 0.13", \
+                       "0.04, 0.05, 0.06, 0.09, 0.14", \
+                       "0.07, 0.08, 0.09, 0.12, 0.17", \
+                       "0.12, 0.13, 0.14, 0.17, 0.22");
+              }
+            }
         }
       }
     }

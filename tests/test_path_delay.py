@@ -1,9 +1,9 @@
 """Tests for parsfet.path_delay — PathSpec, AnalysisConfig, WireLoadModel,
-resolve_manual, propagate, and estimate_path_delay.
+resolve_manual, propagate, estimate_path_delay, and compute_slack.
 
 All tests that need a real dataset use the `sample_liberty_file` fixture from
 conftest.py, which provides INV_X1 (with NLDM timing arcs, ns/pF units) and
-DFF_X1 (sequential, no combinational arcs).
+DFF_X1 (sequential, with Clk→Q, setup_rising, and hold_rising constraint arcs).
 """
 
 import pytest
@@ -19,6 +19,7 @@ from parsfet.path_delay import (
     TimingPoint,
     WireLoadModel,
     _ResolvedStage,
+    compute_slack,
     estimate_path_delay,
     propagate,
     resolve_manual,
@@ -220,12 +221,6 @@ class TestResolveManual:
         res = resolve_manual(inv_path, ds, cfg)
         assert all(s.arc_mode == "average" for s in res.stages)
 
-    def test_linear_data_baked_in(self, ds, inv_path, default_config):
-        """linear_d0_ns and k are resolved from dataset at resolve time."""
-        res = resolve_manual(inv_path, ds, default_config)
-        for s in res.stages:
-            assert s.linear_d0_ns >= 0.0
-            assert s.linear_k_ns_per_pf >= 0.0
 
     def test_derate_override_applied(self, ds):
         path = [
@@ -242,10 +237,11 @@ class TestResolveManual:
         res = resolve_manual(inv_path, ds, cfg)
         assert res.initial_slew_ns == pytest.approx(0.025)
 
-    def test_initial_slew_defaults_to_fo4(self, ds, inv_path, default_config):
+    def test_initial_slew_defaults_to_clock_slew(self, ds, inv_path, default_config):
+        """When initial_slew_ns is not set, default falls back to clock_slew_ns
+        (resolve_manual no longer reads the normalizer FO4 baseline)."""
         res = resolve_manual(inv_path, ds, default_config)
-        fo4_slew = ds.entries[0].normalizer.baseline.fo4_slew
-        assert res.initial_slew_ns == pytest.approx(fo4_slew)
+        assert res.initial_slew_ns == pytest.approx(default_config.clock_slew_ns)
 
     def test_empty_path_raises(self, ds, default_config):
         with pytest.raises(ValueError, match="at least one"):
@@ -420,7 +416,7 @@ class TestEstimatePathDelay:
     def test_unknown_cell_warns(self, ds, default_config):
         path = [PathSpec(cell_name="NONEXISTENT_X99"), PathSpec(cell_name="INV_X1")]
         result = estimate_path_delay(ds, path, default_config)
-        assert any("not found" in w for w in result.warnings)
+        assert any("no Liberty cell" in w or "not found" in w for w in result.warnings)
 
     def test_empty_path_raises(self, ds, default_config):
         with pytest.raises(ValueError, match="at least one"):
@@ -432,7 +428,7 @@ class TestEstimatePathDelay:
 
 
 # ---------------------------------------------------------------------------
-# Coverage: arc_mode='average', linear fallback, deferred warnings, constant
+# Coverage: arc_mode='average'
 # ---------------------------------------------------------------------------
 
 
@@ -453,42 +449,184 @@ class TestCoverageGaps:
         assert r_worst.total_delay_ns > 0
         assert r_avg.total_delay_ns > 0
 
-    def test_unknown_cell_linear_fallback_method(self, ds, default_config):
-        """A cell absent from both lib and DataFrame forces linear fallback."""
+    def test_unknown_cell_delay_is_zero(self, ds, default_config):
+        """A cell absent from the Liberty library produces delay=0 and a warning."""
         path = [PathSpec(cell_name="TOTALLY_UNKNOWN")]
         result = estimate_path_delay(ds, path, default_config)
-        # Only one stage — the unknown cell
-        assert result.points[0].method == "linear"
+        assert result.points[0].delay_ns == 0.0
+        assert result.points[0].method == "nldm"  # method still 'nldm'; delay simply 0
+        assert any("no Liberty cell" in w for w in result.warnings)
 
-    def test_unknown_cell_deferred_warning_in_timing_path(self, ds, default_config):
-        """'not found in metrics dataset' warning fires in propagate(), not resolve_manual().
-        It should appear in TimingPath.warnings (combined), not ManualResolution.warnings."""
-        path = [PathSpec(cell_name="TOTALLY_UNKNOWN")]
-        res = resolve_manual(path, ds, default_config)
-        # Resolution warnings should NOT yet contain the missing-from-df message.
-        assert not any("metrics dataset" in w for w in res.warnings)
-        # But the full estimate should produce it (deferred to propagation time).
-        result = estimate_path_delay(ds, path, default_config)
-        assert any("metrics dataset" in w for w in result.warnings)
 
-    def test_linear_missing_from_df_flag(self, ds, default_config):
-        """_ResolvedStage.linear_missing_from_df is True for unknown cells."""
-        path = [PathSpec(cell_name="TOTALLY_UNKNOWN"), PathSpec(cell_name="INV_X1")]
-        res = resolve_manual(path, ds, default_config)
-        assert res.stages[0].linear_missing_from_df is True
-        assert res.stages[1].linear_missing_from_df is False
+# ---------------------------------------------------------------------------
+# Slack calculation — Liberty model, compute_slack, estimate_path_delay
+# ---------------------------------------------------------------------------
 
-    def test_linear_r2_warn_threshold_is_module_constant(self):
-        """_LINEAR_R2_WARN_THRESHOLD is a module-level float, not a magic literal."""
-        from parsfet.path_delay import _LINEAR_R2_WARN_THRESHOLD
-        assert isinstance(_LINEAR_R2_WARN_THRESHOLD, float)
-        assert 0.0 < _LINEAR_R2_WARN_THRESHOLD < 1.0
 
-    def test_linear_slew_approximation_scales_with_load(self, ds):
-        """Linear fallback slew scales √(load/fo4). Higher load → higher slew."""
-        path_light = [PathSpec(cell_name="TOTALLY_UNKNOWN", extra_cap_pf=0.001)]
-        path_heavy = [PathSpec(cell_name="TOTALLY_UNKNOWN", extra_cap_pf=0.5)]
-        r_light = estimate_path_delay(ds, path_light, AnalysisConfig(output_load_pf=0.001))
-        r_heavy = estimate_path_delay(ds, path_heavy, AnalysisConfig(output_load_pf=0.5))
-        # Both use linear; heavier load → larger slew on the output
-        assert r_heavy.points[0].slew_ns >= r_light.points[0].slew_ns
+class TestSlackCalculation:
+    """Tests for the full NLDM-based setup/hold slack feature."""
+
+    # -- Liberty model (Cell arc filter properties) --------------------------
+
+    def test_dff_has_clk_to_q_arcs(self, ds):
+        """DFF_X1 Q-pin timing() with timing_type=rising_edge should be found."""
+        lib = ds.entries[0].library
+        dff = lib.cells["DFF_X1"]
+        assert len(dff.clk_to_q_arcs) >= 1
+        assert all(a.timing_type in ("rising_edge", "falling_edge") for a in dff.clk_to_q_arcs)
+
+    def test_dff_has_setup_arcs(self, ds):
+        """DFF_X1 D-pin timing() with timing_type=setup_rising should be found."""
+        lib = ds.entries[0].library
+        dff = lib.cells["DFF_X1"]
+        assert len(dff.setup_arcs) >= 1
+        assert all(a.timing_type in ("setup_rising", "setup_falling") for a in dff.setup_arcs)
+
+    def test_dff_has_hold_arcs(self, ds):
+        """DFF_X1 D-pin timing() with timing_type=hold_rising should be found."""
+        lib = ds.entries[0].library
+        dff = lib.cells["DFF_X1"]
+        assert len(dff.hold_arcs) >= 1
+        assert all(a.timing_type in ("hold_rising", "hold_falling") for a in dff.hold_arcs)
+
+    def test_inv_has_no_clk_to_q_arcs(self, ds):
+        """Combinational cells should have no clk_to_q_arcs."""
+        lib = ds.entries[0].library
+        inv = lib.cells["INV_X1"]
+        assert inv.clk_to_q_arcs == []
+        assert inv.setup_arcs == []
+        assert inv.hold_arcs == []
+
+    def test_constraint_at_interpolates(self, ds):
+        """TimingArc.constraint_at() returns a value in the expected range."""
+        lib = ds.entries[0].library
+        dff = lib.cells["DFF_X1"]
+        arc = dff.setup_arcs[0]
+        # Library is in ns/pF; data_slew=0.05 ns, clock_slew=0.05 ns → should be ~0.02-0.035 ns
+        val = arc.constraint_at(0.05, 0.05)
+        assert 0.01 < val < 0.1, f"constraint_at returned unexpected value: {val}"
+
+    # -- resolve_manual: FF stages now get load_pf -------------------------
+
+    def test_ff_stage_has_nonzero_load_pf(self, ds):
+        """After refactor, launch FF stage load_pf = Cin(next stage), not 0."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1")]
+        res = resolve_manual(path, ds, AnalysisConfig())
+        launch = res.stages[0]
+        assert launch.is_skipped is True
+        assert launch.load_pf > 0.0, "launch FF should have Cin(INV_X1) as load"
+
+    def test_ff_stage_has_cell_obj(self, ds):
+        """FF stage cell_obj is populated so compute_slack can access clk_to_q_arcs."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1")]
+        res = resolve_manual(path, ds, AnalysisConfig())
+        assert res.stages[0].cell is not None
+
+    # -- compute_slack isolation -------------------------------------------
+
+    def test_compute_slack_raises_without_period(self, ds):
+        """compute_slack raises ValueError if period_ns is None."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        res = resolve_manual(path, ds, AnalysisConfig())
+        prop = propagate(res.stages, res.initial_slew_ns)
+        with pytest.raises(ValueError, match="period_ns"):
+            compute_slack(prop, res.stages, AnalysisConfig())  # no period_ns
+
+    def test_compute_slack_returns_timing_path(self, ds):
+        """compute_slack returns a TimingPath."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        cfg = AnalysisConfig(period_ns=1.0)
+        res = resolve_manual(path, ds, cfg)
+        prop = propagate(res.stages, res.initial_slew_ns)
+        result = compute_slack(prop, res.stages, cfg)
+        assert isinstance(result, TimingPath)
+
+    def test_compute_slack_populates_clk_to_q(self, ds):
+        """clk_to_q_ns is populated when launch FF has clk_to_q_arcs."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        cfg = AnalysisConfig(period_ns=1.0)
+        res = resolve_manual(path, ds, cfg)
+        prop = propagate(res.stages, res.initial_slew_ns)
+        result = compute_slack(prop, res.stages, cfg)
+        assert result.clk_to_q_ns is not None
+        assert result.clk_to_q_ns > 0.0
+
+    def test_compute_slack_populates_setup_time(self, ds):
+        """setup_time_ns is populated when capture FF has setup arcs."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        cfg = AnalysisConfig(period_ns=1.0)
+        res = resolve_manual(path, ds, cfg)
+        prop = propagate(res.stages, res.initial_slew_ns)
+        result = compute_slack(prop, res.stages, cfg)
+        assert result.setup_time_ns is not None
+        assert result.setup_time_ns > 0.0
+
+    def test_compute_slack_formula_correct(self, ds):
+        """setup_slack == period - clk_to_q - comb - setup - uncertainty."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        cfg = AnalysisConfig(period_ns=1.0, clock_uncertainty_ns=0.01)
+        res = resolve_manual(path, ds, cfg)
+        prop = propagate(res.stages, res.initial_slew_ns)
+        r = compute_slack(prop, res.stages, cfg)
+        if r.setup_slack_ns is not None and r.clk_to_q_ns is not None:
+            expected = (
+                cfg.period_ns
+                - r.clk_to_q_ns
+                - prop.total_delay_ns
+                - r.setup_time_ns
+                - cfg.clock_uncertainty_ns
+            )
+            assert r.setup_slack_ns == pytest.approx(expected, rel=1e-9)
+
+    def test_compute_slack_no_ff_warning(self, ds, inv_path, default_config):
+        """compute_slack warns when no launch FF is found."""
+        cfg = AnalysisConfig(period_ns=1.0)
+        res = resolve_manual(inv_path, ds, cfg)
+        prop = propagate(res.stages, res.initial_slew_ns)
+        result = compute_slack(prop, res.stages, cfg)
+        assert any("launch FF" in w for w in result.warnings)
+
+    # -- estimate_path_delay end-to-end with slack -------------------------
+
+    def test_estimate_with_period_ns_triggers_slack(self, ds):
+        """estimate_path_delay auto-calls compute_slack when period_ns is set."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        result = estimate_path_delay(ds, path, AnalysisConfig(period_ns=1.0))
+        assert result.clk_to_q_ns is not None
+        assert result.setup_time_ns is not None
+        assert result.setup_slack_ns is not None
+
+    def test_estimate_without_period_ns_no_slack(self, ds):
+        """estimate_path_delay does NOT compute slack if period_ns is not set."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        result = estimate_path_delay(ds, path, AnalysisConfig())
+        assert result.clk_to_q_ns is None
+        assert result.setup_slack_ns is None
+
+    def test_estimate_slack_negative_when_tight(self, ds):
+        """With a very tight period, setup_slack should be negative (violation)."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        result = estimate_path_delay(
+            ds, path, AnalysisConfig(period_ns=0.001)  # 1 ps — impossibly tight
+        )
+        if result.setup_slack_ns is not None:
+            assert result.setup_slack_ns < 0, "1ps period should fail timing"
+
+    def test_uncertainty_reduces_setup_slack(self, ds):
+        """Larger clock_uncertainty_ns reduces setup_slack."""
+        path = [PathSpec(cell_name="DFF_X1"), PathSpec(cell_name="INV_X1"),
+                PathSpec(cell_name="DFF_X1")]
+        r0 = estimate_path_delay(ds, path, AnalysisConfig(period_ns=1.0,
+                                                          clock_uncertainty_ns=0.0))
+        r1 = estimate_path_delay(ds, path, AnalysisConfig(period_ns=1.0,
+                                                          clock_uncertainty_ns=0.05))
+        if r0.setup_slack_ns is not None and r1.setup_slack_ns is not None:
+            assert r1.setup_slack_ns < r0.setup_slack_ns

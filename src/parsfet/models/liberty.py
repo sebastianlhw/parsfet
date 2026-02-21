@@ -325,6 +325,34 @@ class TimingArc(BaseModel):
             trans.append(self.fall_transition.interpolate(slew, load))
         return sum(trans) / len(trans) if trans else slew  # Fallback to input slew
 
+    def constraint_at(self, data_slew: float, clock_slew: float) -> float:
+        """Interpolates the setup or hold constraint at a specific operating point.
+
+        For constraint arcs (``timing_type`` in ``setup_rising``, ``setup_falling``,
+        ``hold_rising``, ``hold_falling``), the constraint tables are indexed by:
+
+        * ``index_1`` — data-side input transition (data_slew, in library time units)
+        * ``index_2`` — clock-side input transition (clock_slew, in library time units)
+
+        Returns the maximum of the rise and fall constraint values — this is the
+        worst-case (most pessimistic) interpretation, correct for setup timing.
+        For hold, the caller should take the maximum value as well (most constraining).
+
+        Args:
+            data_slew:  Data input transition in **library time units**.
+            clock_slew: Clock input transition in **library time units**.
+
+        Returns:
+            Interpolated constraint value in library time units.  Returns 0.0 if
+            no constraint tables are present.
+        """
+        vals = []
+        if self.rise_constraint:
+            vals.append(self.rise_constraint.interpolate(data_slew, clock_slew))
+        if self.fall_constraint:
+            vals.append(self.fall_constraint.interpolate(data_slew, clock_slew))
+        return max(vals) if vals else 0.0
+
     def linear_delay_model(self, slew: float) -> tuple[float, float, float]:
         """Extracts a linear delay model: D = D0 + k * Load.
 
@@ -497,6 +525,44 @@ class Cell(BaseModel):
         trans = [arc.output_transition_at(slew, load) for arc in self.timing_arcs]
         trans = [t for t in trans if t > 0]
         return sum(trans) / len(trans) if trans else slew
+
+    @property
+    def clk_to_q_arcs(self) -> list["TimingArc"]:
+        """Timing arcs that represent clock-to-Q propagation (``rising_edge`` / ``falling_edge``).
+
+        These arcs are indexed by ``(clock_slew, output_load)`` — the same axis
+        convention as combinational delay arcs, so
+        :meth:`TimingArc.delay_at` and :meth:`TimingArc.output_transition_at`
+        work directly.
+        """
+        return [
+            a for a in self.timing_arcs
+            if a.timing_type in ("rising_edge", "falling_edge")
+        ]
+
+    @property
+    def setup_arcs(self) -> list["TimingArc"]:
+        """Setup-time constraint arcs (``setup_rising`` / ``setup_falling``).
+
+        Tables are indexed by ``(data_slew, clock_slew)``; use
+        :meth:`TimingArc.constraint_at` for interpolation.
+        """
+        return [
+            a for a in self.timing_arcs
+            if a.timing_type in ("setup_rising", "setup_falling")
+        ]
+
+    @property
+    def hold_arcs(self) -> list["TimingArc"]:
+        """Hold-time constraint arcs (``hold_rising`` / ``hold_falling``).
+
+        Tables are indexed by ``(data_slew, clock_slew)``; use
+        :meth:`TimingArc.constraint_at` for interpolation.
+        """
+        return [
+            a for a in self.timing_arcs
+            if a.timing_type in ("hold_rising", "hold_falling")
+        ]
 
     def linear_delay_model(self, slew: float) -> tuple[float, float, float]:
         """Extracts a linear delay model from the slowest timing arc.

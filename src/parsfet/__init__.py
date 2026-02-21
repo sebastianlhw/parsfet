@@ -29,6 +29,7 @@ from .path_delay import (
     estimate_path_delay,
     resolve_manual,
     propagate,
+    compute_slack,
 )
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "estimate_path_delay",
     "resolve_manual",
     "propagate",
+    "compute_slack",
 ]
