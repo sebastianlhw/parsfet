@@ -66,6 +66,34 @@ def test_cli_normalize(runner, sample_liberty_file):
         assert "d0_ratio" in cell
 
 
+def test_cli_normalize_include_port_geometry(runner, sample_liberty_file, sample_lef_file):
+    with runner.isolated_filesystem():
+        output_file = Path("normalized_ports.json")
+        result = runner.invoke(
+            app, 
+            [
+                "normalize", 
+                str(sample_liberty_file), 
+                "--lef",
+                str(sample_lef_file),
+                "--include-port-geometry",
+                "--output", 
+                str(output_file)
+            ]
+        )
+        assert result.exit_code == 0
+        assert output_file.exists()
+        
+        data = json.loads(output_file.read_text())
+        assert "INV_X1" in data["cells"]
+        
+        cell = data["cells"]["INV_X1"]
+        assert "physical" in cell
+        pin_a = cell["physical"]["pins"]["A"]
+        assert "ports" in pin_a
+        assert len(pin_a["ports"]) > 0
+
+
 def test_cli_compare(runner, sample_liberty_content):
     # Create two versions of the library
     lib_a = Path("lib_a.lib")
@@ -145,6 +173,34 @@ def test_cli_combine(runner, sample_liberty_file):
         
         data = json.loads(output_file.read_text())
         assert len(data["cells"]) > 0
+
+
+def test_cli_combine_include_port_geometry(runner, sample_liberty_file, sample_lef_file):
+    output_file = Path("combined_ports.json")
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            app, 
+            [
+                "combine", 
+                str(sample_liberty_file), 
+                "--lef",
+                str(sample_lef_file),
+                "--include-port-geometry",
+                "--output", 
+                str(output_file)
+            ]
+        )
+        assert result.exit_code == 0
+        assert output_file.exists()
+        
+        data = json.loads(output_file.read_text())
+        assert len(data["cells"]) > 0
+        
+        cell = data["cells"]["INV_X1"]
+        assert "physical" in cell
+        pin_a = cell["physical"]["pins"]["A"]
+        assert "ports" in pin_a
+        assert len(pin_a["ports"]) > 0
 
 
 def test_cli_export(runner, sample_liberty_file):

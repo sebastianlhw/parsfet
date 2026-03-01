@@ -535,21 +535,26 @@ class Dataset:
                     row["lef_width"] = lef_cell.width
                     row["lef_height"] = lef_cell.height
                     row["lef_area"] = lef_cell.area
-                    # Pin info as JSON for easy analysis (includes use type)
+                    # Pin info as JSON for easy analysis (includes use type and per-layer area)
                     pin_info = {
                         name: {
                             "direction": p.direction,
                             "use": p.use,
                             "layers": p.layers,
+                            "area_by_layer": p.area_by_layer,
                         }
                         for name, p in lef_cell.pins.items()
                     }
                     row["pin_layers_json"] = json.dumps(pin_info)
+                    # OBS area per layer as JSON. Serializes '{}' when this cell has no
+                    # obstruction shapes (vs. None which means no LEF was loaded at all).
+                    row["obs_area_json"] = json.dumps(lef_cell.obs_area_by_layer)
                 else:
                     row["lef_width"] = None
                     row["lef_height"] = None
                     row["lef_area"] = None
                     row["pin_layers_json"] = None
+                    row["obs_area_json"] = None
 
                 # Add TechLEF data if available
                 if entry.tech_info:
@@ -795,7 +800,7 @@ class Dataset:
             },
         }
 
-    def export_to_json(self, entry_index: int = 0) -> dict:
+    def export_to_json(self, entry_index: int = 0, include_port_geometry: bool = False) -> dict:
         """Export combined Liberty + LEF/TechLEF data to a JSON-serializable dict.
 
         This produces a comprehensive JSON structure that includes:
@@ -805,6 +810,10 @@ class Dataset:
 
         Args:
             entry_index: Index of the library entry to export (default 0).
+            include_port_geometry: If True, each pin in the output will include
+                a 'ports' list of raw rectangles (x1, y1, x2, y2, layer)
+                from the LEF port geometry. Disabled by default to keep the
+                output compact; enable for pin-access analysis or GNN use cases.
 
         Returns:
             A dictionary suitable for JSON serialization.
@@ -854,6 +863,18 @@ class Dataset:
             }
 
         # Add physical data to each cell
+        def _serialize_pin(pin):
+            d = {
+                "direction": pin.direction,
+                "use": pin.use,  # power, ground, clock, signal
+                "layers": pin.layers,
+                "area_by_layer": pin.area_by_layer,  # um² per layer (sum of rects)
+            }
+            if include_port_geometry:
+                # Raw port rectangles for pin-access / GNN workflows.
+                d["ports"] = pin.ports
+            return d
+
         for cell_name in result.get("cells", {}):
             if cell_name in entry.lef_cells:
                 lef_cell = entry.lef_cells[cell_name]
@@ -862,26 +883,27 @@ class Dataset:
                     "height_um": lef_cell.height,
                     "area_um2": lef_cell.area,
                     "pins": {
-                        pin_name: {
-                            "direction": pin.direction,
-                            "use": pin.use,  # power, ground, clock, signal
-                            "layers": pin.layers,
-                        }
+                        pin_name: _serialize_pin(pin)
                         for pin_name, pin in lef_cell.pins.items()
                     },
+                    # Sum of OBS rectangle areas per layer (um²). May overestimate
+                    # if obstruction rectangles overlap within the same layer.
+                    "obstructions_area": lef_cell.obs_area_by_layer,
                 }
 
         return result
 
-    def save_json(self, path: Path | str, entry_index: int = 0, indent: int = 2) -> None:
+    def save_json(self, path: Path | str, entry_index: int = 0, indent: int = 2, include_port_geometry: bool = False) -> None:
         """Save combined Liberty + LEF/TechLEF data to a JSON file.
 
         Args:
             path: Output file path.
             entry_index: Index of the library entry to export (default 0).
             indent: JSON indentation (default 2).
+            include_port_geometry: If True, includes raw port rectangle coordinates
+                for each pin. See export_to_json() for details.
         """
-        data = self.export_to_json(entry_index)
+        data = self.export_to_json(entry_index, include_port_geometry=include_port_geometry)
         with open(path, "w") as f:
             json.dump(data, f, indent=indent)
 

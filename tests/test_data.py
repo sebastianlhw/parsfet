@@ -182,6 +182,34 @@ def test_export_to_json(sample_liberty_file, sample_lef_file):
             assert "layers" in pin
 
 
+def test_export_to_json_include_port_geometry(sample_liberty_file, sample_lef_file):
+    """Test export_to_json produces proper structure with include_port_geometry=True."""
+    ds = Dataset()
+    ds.load_files([sample_liberty_file])
+    ds.load_lef([sample_lef_file])
+    ds.load_tech_lef(sample_lef_file)
+
+    data = ds.export_to_json(include_port_geometry=True)
+
+    assert "INV_X1" in data.get("cells", {})
+    cell = data["cells"]["INV_X1"]
+    assert "physical" in cell
+    assert "pins" in cell["physical"]
+    
+    assert "A" in cell["physical"]["pins"]
+    pin_a = cell["physical"]["pins"]["A"]
+    assert "ports" in pin_a
+    assert len(pin_a["ports"]) > 0
+    
+    port = pin_a["ports"][0]
+    assert "layer" in port
+    assert "x1" in port
+    assert "y1" in port
+    assert "x2" in port
+    assert "y2" in port
+    assert port["layer"] == "M1"
+
+
 def test_export_to_json_empty():
     """Test export_to_json on empty dataset."""
     ds = Dataset()

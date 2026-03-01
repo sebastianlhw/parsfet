@@ -15,10 +15,10 @@ Public API
 
 **Shared computation type** (internal):
 
-    _ResolvedStage — fully-resolved per-stage atom: cell ref, load, derates,
-                     arc_mode, linear fallback coefficients, skip flag.
+    _ResolvedStage — fully-resolved per-stage state: cell ref, load, derates,
+                     arc_mode, skip flag.
                      Produced by resolve_manual(); future resolve_netlist() will
-                     produce the same type.  Users never construct this directly.
+                     produce the same type. Users never construct this directly.
 
 **Output types** (engine-controlled dataclasses):
 
@@ -28,9 +28,26 @@ Public API
 **Functions**:
 
     resolve_manual(path, dataset, config)  → ManualResolution
-    propagate(stages, initial_slew_ns)     → TimingPath          (pure)
+    propagate(stages, initial_slew_ns)     → TimingPath          (stateless)
     estimate_path_delay(dataset, path,     → TimingPath          (convenience)
                         config)
+
+**Data Flow Architecture**:
+
+.. mermaid::
+
+    flowchart TD
+       A[Dataset] -->|Cell Arcs, Cin| RM
+       B[list: PathSpec] -->|Target Path| RM
+       C[AnalysisConfig] -->|Derates, Arc Mode| RM
+       RM[resolve_manual] -->|$O(N)$ Validation\nUnit Conversion\nCell Lookup| RS
+       RS[list: _ResolvedStage] -->|Stateless Evaluation| P[propagate]
+       C -.->|initial_slew_ns| P
+       P --> TP[TimingPath]
+       C -.->|period_ns| CS[compute_slack]
+       TP -.->|Base Arrival/Slew| CS
+       RS -.->|Setup/Hold/Clk2Q Arcs| CS
+       CS --> Final[Final TimingPath with Slack]
 
 Example::
 
@@ -51,11 +68,14 @@ Example::
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import numpy as np
 from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -70,8 +90,15 @@ if TYPE_CHECKING:
 class WireLoadModel(BaseModel):
     """Maps fanout count to wire capacitance in pF for a given process node.
 
-    All values are ORDER-OF-MAGNITUDE estimates for early design exploration.
+    All values are approximations intended for early design exploration.
     Use SPEF for sign-off accuracy.
+
+    **Mathematical Provenance**:
+    The default process templates (e.g. `typical_7nm`, etc., when implemented)
+    are derived from rule-of-thumb FO4 logic scaling factors rather than extracted
+    SPEF or empirical foundry data. Future process node configurations should
+    document whether they are based on standard linear scaling ($C_{wire} \\propto N_{fanout}$)
+    or physical interconnect resistance-capacitance (RC) polynomial fitting.
 
     Attributes:
         fanout_cap_pf: dict mapping fanout (≥1) to wire cap in pF (≥0).
@@ -136,7 +163,7 @@ class PathSpec(BaseModel):
 
     1. Exactly one on-path sink (the next ``PathSpec``) — always counted once.
     2. Zero or more off-path sinks (``off_path_loads``) — capacitive load only.
-    3. Fanout shorthand (``fanout``) — (fanout-1) extra copies of the on-path sink.
+    3. Fanout multiplier (``fanout``) — (fanout-1) extra copies of the on-path sink.
     4. Manual extra capacitance (``extra_cap_pf``) — pads, ESD, long wires.
 
     Load resolution order:
@@ -145,8 +172,8 @@ class PathSpec(BaseModel):
     * otherwise → ``fanout × Cin(next) + wire_cap(fanout) + extra``
 
     Per-stage derate overrides (``delay_derate``, ``slew_derate``):
-        ``None`` → inherit from :class:`AnalysisConfig` (most stages).
-        Set to override for one cell (e.g. known aging or process variation).
+        Default behavior inherits from :class:`AnalysisConfig`.
+        Set these to define an override for one cell (e.g. known aging or process variation).
 
     Examples::
 
@@ -188,16 +215,16 @@ class AnalysisConfig(BaseModel):
 
     Attributes:
         delay_derate: Multiplicative factor on each stage's raw delay.
-            1.0 = nominal.  >1.0 = pessimistic (late corner / OCV).
+            1.0 = nominal.  >1.0 = pessimistic (e.g. process variation margin).
             Range [0.5, 2.0].
         slew_derate: Multiplicative factor on each stage's output slew
             before propagating to the next stage.  Range [0.5, 2.0].
         arc_mode: ``'worst'`` — slowest arc at the (slew, load) point (default).
             ``'average'`` — ``Cell.delay_at()`` averages all arcs.
         wire_load: :class:`WireLoadModel` for wire parasitics.
-            ``None`` = ideal wires.
+            Defaults to ideal wires.
         initial_slew_ns: Input slew for the first stage in ns.
-            ``None`` = use FO4 slew from the first entry's normalizer.
+            Defaults to the clock slew.
         output_load_pf: Capacitive load on the last stage's output pin (pF).
 
     Example::
@@ -240,13 +267,13 @@ class AnalysisConfig(BaseModel):
 
 @dataclass(frozen=True)
 class _ResolvedStage:
-    """Internal.  Produced by resolve_manual() (and future resolve_netlist()).
+    """Internal. Produced by resolve_manual() (and future resolve_netlist()).
 
-    Contains everything propagate() needs for one stage — no dataset,
-    no PathSpec, no netlist reference.  Users never construct this directly.
+    Contains required data for one stage computation — independent of dataset,
+    PathSpec, or netlist reference. Users never construct this directly.
 
-    All analysis choices (arc_mode, derates) and all lookup results (unit
-    conversions) are baked in at resolution time, keeping propagate() pure.
+    All analysis choices (arc_mode, derates) and lookup results (unit
+    conversions) are computed at resolution time, maintaining propagate() as a stateless function.
 
     Attributes:
         cell_name:     For reporting and identifying the stage.
@@ -291,14 +318,10 @@ class ManualResolution(NamedTuple):
         stages:          One :class:`_ResolvedStage` per input :class:`PathSpec`
                          (including skipped sequential stages — ``len(stages)``
                          always equals ``len(path)``).
-        warnings:        Non-fatal issues detected during resolution (unknown cells,
-                         saturation, sequential skips, multi-entry datasets, …).
-        initial_slew_ns: Resolved input slew for the first stage (from
-                         ``AnalysisConfig.initial_slew_ns`` or FO4 baseline).
+        initial_slew_ns: Resolved input slew for the first stage.
     """
 
     stages: list[_ResolvedStage]
-    warnings: list[str]
     initial_slew_ns: float
 
 
@@ -341,10 +364,10 @@ class TimingPath:
     The ``points`` list always has exactly ``len(path_spec)`` entries — sequential
     stages appear with ``method='skipped'`` and ``delay_ns=0``.
 
-    **Combinational vs FF timing:**
+    **Combinational vs Sequential Timing Constraints:**
     ``total_delay_ns`` is strictly the summed combinational delay.  Clock-to-Q and
-    setup/hold times are stored separately in the slack fields and are only populated
-    when :attr:`AnalysisConfig.period_ns` is set via :func:`compute_slack`.
+    setup/hold constraints are evaluated automatically by :func:`compute_slack`
+    when :attr:`AnalysisConfig.period_ns` is specified.
 
     Slack formula::
 
@@ -357,32 +380,25 @@ class TimingPath:
         points:          One :class:`TimingPoint` per :class:`PathSpec`.
         total_delay_ns:  Sum of combinational delays (ns). Sequential stages
                          contribute 0. Does **not** include Clk→Q.
-        clk_to_q_ns:     Launch FF clock-to-Q delay (ns). ``None`` if no FF
-                         with Clk→Q arcs found, or ``period_ns`` not set.
-        setup_time_ns:   Capture FF setup-time constraint (ns). ``None`` when
-                         unavailable or ``period_ns`` not set.
-        hold_time_ns:    Capture FF hold-time constraint (ns). ``None`` when
-                         unavailable or ``period_ns`` not set.
-        setup_slack_ns:  Setup-timing slack (ns). Negative = violation. ``None``
-                         when any required term is unavailable.
-        hold_slack_ns:   Hold-timing slack (ns). Negative = violation. ``None``
-                         when unavailable.
-        warnings:        Combined warnings from resolution and propagation.
+        clk_to_q_ns:     Launch element clock-to-Q delay (ns). Excluded from calculations if missing.
+        setup_time_ns:   Capture element setup-time constraint (ns). Excluded if missing.
+        hold_time_ns:    Capture element hold-time constraint (ns). Excluded if missing.
+        setup_slack_ns:  Setup-timing slack (ns). Negative = violation. Missing if required terms are absent.
+        hold_slack_ns:   Hold-timing slack (ns). Negative = violation. Missing if required terms are absent.
     """
 
     points: list[TimingPoint]
     total_delay_ns: float
-    # FF-timing fields (None when period_ns not set, or FF arcs not available)
+    # Sequential element constraint fields
     clk_to_q_ns: float | None = None
     setup_time_ns: float | None = None
     hold_time_ns: float | None = None
     setup_slack_ns: float | None = None
     hold_slack_ns: float | None = None
-    warnings: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# resolve_manual — factory: list[PathSpec] → ManualResolution
+# resolve_manual - factory: list[PathSpec] → ManualResolution
 # ---------------------------------------------------------------------------
 
 
@@ -393,13 +409,12 @@ def resolve_manual(
 ) -> ManualResolution:
     """Translate a manual path spec into resolved stages ready for propagation.
 
-    Called once per timing run.  Performs all dataset lookups (cell Cin,
-    linear-model coefficients, unit conversions) and stores results in each
-    :class:`_ResolvedStage` so that :func:`propagate` is a pure function.
+    Performs all dataset lookups (cell Cin, unit conversions) and computes
+    parameter constraints for each :class:`_ResolvedStage` $O(N)$ so that
+    :func:`propagate` operates state-free.
 
     The returned ``stages`` list has exactly ``len(path)`` entries; sequential
-    cells are represented as ``_ResolvedStage(is_skipped=True)`` rather than
-    being silently dropped.
+    cells are represented as ``_ResolvedStage(is_skipped=True)``.
 
     Args:
         path:    Ordered list of :class:`PathSpec` objects (input → output).
@@ -407,10 +422,10 @@ def resolve_manual(
         config:  :class:`AnalysisConfig` controlling wire model, derates, arc mode.
 
     Returns:
-        :class:`ManualResolution` — stages, warnings, resolved initial slew.
+        :class:`ManualResolution` — computed stages and resolved initial slew.
 
     Raises:
-        ValueError: If no entries loaded, path is empty, or DataFrame is empty.
+        ValueError: If no entries loaded or if the path is empty.
     """
     if not dataset.entries:
         raise ValueError("No entries loaded. Call load_files() first.")
@@ -419,10 +434,9 @@ def resolve_manual(
 
     # Build name-keyed Liberty Cell dict (first entry wins for duplicates).
     lib_cell_tuples: dict[str, tuple] = {}  # name → (Cell, t_div, c_div, t_mul)
-    warnings: list[str] = []
     if len(dataset.entries) > 1:
-        warnings.append(
-            "Multiple library entries detected. NLDM arc walk uses first-entry-wins "
+        logger.warning(
+            "Multiple library entries detected. NLDM arc evaluation uses first-entry-wins "
             "for duplicate cell names. Call combine() for consistent behaviour."
         )
     for e in reversed(dataset.entries):
@@ -434,8 +448,8 @@ def resolve_manual(
             for c in e.library.cells.values():
                 lib_cell_tuples[c.name] = (c, t_div, c_div, t_mul, c_mul)
 
-    # Default initial slew: explicit config value  →  clock_slew_ns (a reasonable
-    # process-agnostic physical quantity already in AnalysisConfig).
+    # Default initial slew: explicit config value  →  clock_slew_ns (a standard
+    # process-agnostic timing parameter defined in AnalysisConfig).
     initial_slew_ns = (
         config.initial_slew_ns if config.initial_slew_ns is not None
         else config.clock_slew_ns
@@ -459,18 +473,17 @@ def resolve_manual(
         t_div, c_div, t_mul = (tup[1], tup[2], tup[3]) if tup else (1.0, 1.0, 1.0)
 
         if cell_obj is None:
-            warnings.append(
-                f"Stage {i} '{cell_name}': not found in any loaded Liberty library."
-            )
+            logger.warning("Stage %d (%s): not found in any loaded Liberty library.", i, cell_name)
 
         # --- Sequential cell detection (flag only — do NOT continue early) ---
-        # FF stages still need load_pf (for Clk→Q lookup) and cell_obj
+        # Sequential element stages still need load_pf (for Clk→Q lookup) and cell_obj
         # (for clk_to_q_arcs / setup_arcs in compute_slack).
         is_seq = cell_obj is not None and cell_obj.is_sequential
         if is_seq:
-            warnings.append(
-                f"Stage {i} '{cell_name}': sequential cell (DFF/latch). "
-                f"Clk→Q is handled by compute_slack(). Stage skipped in propagate()."
+            logger.info(
+                "Stage %d (%s): Sequential cell. Clk→Q handled by compute_slack(). "
+                "Skipping delay calculation in propagate().",
+                i, cell_name
             )
 
         # --- Resolve output load (Cin from Liberty pin capacitances) ---
@@ -480,15 +493,17 @@ def resolve_manual(
             if cin_next is None:
                 cin_next = _cin_pf(cell_name)
                 if cin_next is not None:
-                    warnings.append(
-                        f"Stage {i} '{cell_name}': next cell '{next_name}' not in library — "
-                        f"using current cell Cin={cin_next:.4f} pF as estimate."
+                    logger.warning(
+                        "Stage %d (%s): Next cell (%s) not found in library. "
+                        "Using current cell Cin=%.4f pF as load estimate.",
+                        i, cell_name, next_name, cin_next
                     )
                 else:
                     cin_next = 0.005
-                    warnings.append(
-                        f"Stage {i} '{cell_name}': neither this nor next cell found — "
-                        f"using 0.005 pF Cin fallback."
+                    logger.warning(
+                        "Stage %d (%s): Neither this nor next cell found. "
+                        "Forcing 0.005 pF Cin fallback.",
+                        i, cell_name
                     )
 
             if spec.off_path_loads:
@@ -498,9 +513,9 @@ def resolve_manual(
                     if sink_cin is not None:
                         off_cap += sink_cin
                     else:
-                        warnings.append(
-                            f"Stage {i} '{cell_name}': off-path sink '{sink}' not "
-                            f"found — Cin contribution ignored."
+                        logger.warning(
+                            "Stage %d (%s): off-path sink (%s) not found - Cin disregarded.",
+                            i, cell_name, sink
                         )
                 wire_cap = wlm.wire_cap(1 + len(spec.off_path_loads)) if wlm else 0.0
                 load_pf = cin_next + off_cap + spec.extra_cap_pf + wire_cap
@@ -534,13 +549,12 @@ def resolve_manual(
 
     return ManualResolution(
         stages=stages,
-        warnings=warnings,
         initial_slew_ns=initial_slew_ns,
     )
 
 
 # ---------------------------------------------------------------------------
-# propagate — pure engine: list[_ResolvedStage] → TimingPath
+# propagate - stateless evaluation: list[_ResolvedStage] → TimingPath
 # ---------------------------------------------------------------------------
 
 
@@ -548,16 +562,16 @@ def propagate(
     stages: list[_ResolvedStage],
     initial_slew_ns: float,
 ) -> TimingPath:
-    """Pure timing propagation engine.
+    """Stateless timing propagation function.
 
     Iterates over :class:`_ResolvedStage` objects, computing delay and slew at
-    each stage using the NLDM arc tables.  Emits one :class:`TimingPoint` per
+    each stage using the NLDM timing arcs. Emits one :class:`TimingPoint` per
     stage, including skipped sequential stages (``method='skipped'``, ``delay_ns=0``).
     Stages without a Liberty cell emit ``delay_ns=0`` and a warning.
 
-    This function has **no side effects** and makes **no I/O calls** — all cell
-    data, unit conversions, and analysis choices (arc_mode, derates) are baked
-    into each :class:`_ResolvedStage` by :func:`resolve_manual` (or a future
+    This function isolates computation from data retrieval. All cell
+    data, unit conversions, and analysis choices are provided within each
+    :class:`_ResolvedStage` by :func:`resolve_manual` (or a future
     ``resolve_netlist``).
 
     Args:
@@ -565,10 +579,8 @@ def propagate(
         initial_slew_ns: Input slew at the first stage in ns.
 
     Returns:
-        :class:`TimingPath`.  Combine ``.warnings`` with
-        :attr:`ManualResolution.warnings` for the full warning picture.
+        :class:`TimingPath`.
     """
-    prop_warnings: list[str] = []
     current_slew_ns = initial_slew_ns
     arrival_ns = 0.0
     points: list[TimingPoint] = []
@@ -595,19 +607,20 @@ def propagate(
         stage_delay = 0.0
         next_slew = current_slew_ns
 
-        # --- NLDM arc walk ---
+        # --- NLDM arc evaluation ---
         slew_lib = current_slew_ns * rs.t_div   # ns → lib units
         load_lib = rs.load_pf * rs.c_div        # pF → lib units
 
         if rs.cell is None or not getattr(rs.cell, "timing_arcs", None):
-            prop_warnings.append(
-                f"Stage {i} '{cell_name}': no Liberty cell or timing arcs — "
-                f"delay set to 0. Ensure '{cell_name}' is in the loaded library."
+            logger.warning(
+                "Stage %d (%s): no Liberty cell or timing arcs — delay set to 0. "
+                "Verify %s exists in the loaded library.",
+                i, cell_name, cell_name
             )
         elif rs.arc_mode == "worst":
             # Scan all arcs; pick the one with highest delay.
-            # Accept that arc's output slew — don't double-pessimise by
-            # independently maximising delay and slew from different arcs.
+            # Use the output slew from the selected arc to avoid combining maximum delay
+            # and maximum slew from different arcs, which overestimates resulting delay.
             best_arc = None
             best_delay_lib = 0.0
             for arc in rs.cell.timing_arcs:
@@ -619,10 +632,10 @@ def propagate(
                 stage_delay = best_delay_lib * rs.t_mul
                 next_slew = best_arc.output_transition_at(slew_lib, load_lib) * rs.t_mul
             else:
-                prop_warnings.append(
-                    f"Stage {i} '{cell_name}': arc_mode='worst' found no "
-                    f"positive-delay arcs at slew={current_slew_ns:.4f} ns, "
-                    f"load={rs.load_pf:.4f} pF — delay set to 0."
+                logger.warning(
+                    "Stage %d (%s): arc_mode='worst' found no positive-delay arcs "
+                    "at slew=%.4f ns, load=%.4f pF — delay set to 0.",
+                    i, cell_name, current_slew_ns, rs.load_pf
                 )
         else:  # 'average'
             stage_delay = rs.cell.delay_at(slew_lib, load_lib) * rs.t_mul
@@ -649,12 +662,11 @@ def propagate(
     return TimingPath(
         points=points,
         total_delay_ns=sum(pt.delay_ns for pt in points),
-        warnings=prop_warnings,
     )
 
 
 # ---------------------------------------------------------------------------
-# compute_slack — pure post-processing: adds setup/hold slack to TimingPath
+# compute_slack - stateless post-processing: adds setup/hold slack to TimingPath
 # ---------------------------------------------------------------------------
 
 
@@ -665,8 +677,8 @@ def compute_slack(
 ) -> TimingPath:
     """Add setup/hold slack fields to an existing :class:`TimingPath`.
 
-    This is a pure, stateless post-processing step that reads timing arc
-    data baked into :class:`_ResolvedStage` objects by :func:`resolve_manual`.
+    This is a stateless post-processing step that reads timing arc
+    data stored in :class:`_ResolvedStage` objects by :func:`resolve_manual`.
     It does **not** modify ``path_result`` — it returns a new :class:`TimingPath`.
 
     Called automatically by :func:`estimate_path_delay` when
@@ -687,8 +699,8 @@ def compute_slack(
         config:      :class:`AnalysisConfig` with ``period_ns`` set.
 
     Returns:
-        New :class:`TimingPath` with slack fields populated.  Non-fatal issues
-        (e.g. missing FF arcs) appear as entries in ``warnings``.
+        New :class:`TimingPath` with slack fields populated. Log messages
+        are emitted for issues like missing sequential arcs.
 
     Raises:
         ValueError: If ``config.period_ns`` is ``None``.
@@ -696,7 +708,6 @@ def compute_slack(
     if config.period_ns is None:
         raise ValueError("compute_slack() requires config.period_ns to be set.")
 
-    slack_warnings: list[str] = []
     clk_to_q_ns: float | None = None
     setup_time_ns: float | None = None
     hold_time_ns: float | None = None
@@ -734,15 +745,15 @@ def compute_slack(
             arc_delays = [d for d in arc_delays if d > 0]
             clk_to_q_ns = (sum(arc_delays) / len(arc_delays) * launch_stage.t_mul) if arc_delays else None
         if clk_to_q_ns is None:
-            slack_warnings.append(
-                "compute_slack: launch FF Clk→Q arc returned 0 at the given "
-                f"clock_slew={config.clock_slew_ns:.4f} ns and "
-                f"load={launch_stage.load_pf:.4f} pF.  Tclk2q omitted from slack."
+            logger.warning(
+                "compute_slack: launch sequential element Clk→Q arc returned 0 at the given "
+                "clock_slew=%.4f ns and load=%.4f pF. Tclk2q omitted from slack.",
+                config.clock_slew_ns, launch_stage.load_pf
             )
     else:
-        slack_warnings.append(
-            "compute_slack: no launch FF with Clk→Q arcs found. "
-            "Tclk2q set to 0 (combinational-only path or FF has no clk_to_q_arcs)."
+        logger.info(
+            "compute_slack: no launch sequential element with Clk→Q arcs found. "
+            "Tclk2q set to 0 (combinational-only path or cell has no clk_to_q_arcs)."
         )
         clk_to_q_ns = 0.0
 
@@ -776,8 +787,8 @@ def compute_slack(
         ]
         hold_time_ns = (max(hold_vals) * capture_stage.t_mul) if hold_vals else None
     else:
-        slack_warnings.append(
-            "compute_slack: no capture FF with setup arcs found. "
+        logger.info(
+            "compute_slack: no capture sequential element with setup arcs found. "
             "Setup and hold slack omitted."
         )
 
@@ -808,7 +819,6 @@ def compute_slack(
         hold_time_ns=hold_time_ns,
         setup_slack_ns=setup_slack,
         hold_slack_ns=hold_slack,
-        warnings=path_result.warnings + slack_warnings,
     )
 
 
@@ -824,9 +834,9 @@ def estimate_path_delay(
 ) -> TimingPath:
     """Estimate total delay for a manual multi-stage combinational timing path.
 
-    Convenience wrapper: calls :func:`resolve_manual` once (single
-    ``to_dataframe()`` call), then :func:`propagate` (pure, no I/O).
-    For advanced usage, call those two directly.
+    Convenience wrapper: calls :func:`resolve_manual` once,
+    then :func:`propagate` (stateless execution).
+    For advanced usage, call those two functions independently.
 
     Args:
         dataset: Loaded :class:`~parsfet.data.Dataset`.
@@ -853,22 +863,12 @@ def estimate_path_delay(
         print(f"Total: {result.total_delay_ns*1e3:.1f} ps")
         for pt in result.points:
             print(f"  {pt.name:20s}  {pt.delay_ns*1e3:5.1f} ps  [{pt.method}]")
-        for w in result.warnings:
-            print("WARN:", w)
     """
     if config is None:
         config = AnalysisConfig()
 
     res = resolve_manual(path, dataset, config)
-    internal = propagate(res.stages, res.initial_slew_ns)
-
-    # Merge resolution warnings (cell lookups, saturation) with
-    # propagation warnings (arc failures, low R²) into the final result.
-    result = TimingPath(
-        points=internal.points,
-        total_delay_ns=internal.total_delay_ns,
-        warnings=res.warnings + internal.warnings,
-    )
+    result = propagate(res.stages, res.initial_slew_ns)
 
     # Run slack computation automatically when a clock period is specified.
     if config.period_ns is not None:

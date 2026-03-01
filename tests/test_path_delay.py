@@ -92,10 +92,8 @@ class TestWireLoadModel:
         assert wlm.wire_cap(2) == pytest.approx(0.003)
 
     def test_presets_exist(self):
-        for method in ("typical_7nm", "typical_14nm", "typical_28nm",
-                       "typical_65nm", "typical_130nm"):
-            wlm = getattr(WireLoadModel, method)()
-            assert wlm.wire_cap(4) > 0
+        wlm = WireLoadModel.wlm_template()
+        assert wlm.wire_cap(4) > 0
 
     def test_frozen(self):
         wlm = WireLoadModel.zero()
@@ -251,10 +249,12 @@ class TestResolveManual:
         with pytest.raises(ValueError, match="No entries"):
             resolve_manual(inv_path, Dataset(), default_config)
 
-    def test_sequential_warning_emitted(self, ds, default_config):
+    def test_sequential_warning_emitted(self, ds, default_config, caplog):
+        import logging
+        caplog.set_level(logging.INFO)
         path = [PathSpec(cell_name="DFF_X1")]
         res = resolve_manual(path, ds, default_config)
-        assert any("sequential" in w for w in res.warnings)
+        assert any("Sequential cell" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -352,12 +352,14 @@ class TestEstimatePathDelay:
         assert result.points[1].method == "skipped"
         assert result.points[1].name == "DFF_X1"
 
-    def test_warnings_combined(self, ds, default_config):
+    def test_warnings_combined(self, ds, default_config, caplog):
         """Warnings from resolution and propagation combined into TimingPath."""
+        import logging
+        caplog.set_level(logging.INFO)
         path = [PathSpec(cell_name="INV_X1"), PathSpec(cell_name="DFF_X1")]
         result = estimate_path_delay(ds, path, default_config)
         # Sequential skip warning comes from resolve_manual
-        assert any("sequential" in w for w in result.warnings)
+        assert any("Sequential cell" in record.message for record in caplog.records)
 
     def test_delay_derate_scales_delay(self, ds, inv_path):
         r_nominal = estimate_path_delay(ds, inv_path, AnalysisConfig(delay_derate=1.0))
@@ -370,7 +372,7 @@ class TestEstimatePathDelay:
         r_no_wire = estimate_path_delay(ds, inv_path, AnalysisConfig())
         r_wire = estimate_path_delay(
             ds, inv_path,
-            AnalysisConfig(wire_load=WireLoadModel.typical_7nm()),
+            AnalysisConfig(wire_load=WireLoadModel.wlm_template()),
         )
         # Wire load adds capacitance → higher delay
         assert r_wire.total_delay_ns >= r_no_wire.total_delay_ns
@@ -413,10 +415,10 @@ class TestEstimatePathDelay:
             assert pt.method in ("nldm", "linear", "skipped")
             assert pt.delay_derate >= 0.5
 
-    def test_unknown_cell_warns(self, ds, default_config):
+    def test_unknown_cell_warns(self, ds, default_config, caplog):
         path = [PathSpec(cell_name="NONEXISTENT_X99"), PathSpec(cell_name="INV_X1")]
         result = estimate_path_delay(ds, path, default_config)
-        assert any("no Liberty cell" in w or "not found" in w for w in result.warnings)
+        assert any("no Liberty cell" in record.message or "not found" in record.message for record in caplog.records)
 
     def test_empty_path_raises(self, ds, default_config):
         with pytest.raises(ValueError, match="at least one"):
@@ -449,13 +451,13 @@ class TestCoverageGaps:
         assert r_worst.total_delay_ns > 0
         assert r_avg.total_delay_ns > 0
 
-    def test_unknown_cell_delay_is_zero(self, ds, default_config):
+    def test_unknown_cell_delay_is_zero(self, ds, default_config, caplog):
         """A cell absent from the Liberty library produces delay=0 and a warning."""
         path = [PathSpec(cell_name="TOTALLY_UNKNOWN")]
         result = estimate_path_delay(ds, path, default_config)
         assert result.points[0].delay_ns == 0.0
         assert result.points[0].method == "nldm"  # method still 'nldm'; delay simply 0
-        assert any("no Liberty cell" in w for w in result.warnings)
+        assert any("no Liberty cell" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -583,13 +585,15 @@ class TestSlackCalculation:
             )
             assert r.setup_slack_ns == pytest.approx(expected, rel=1e-9)
 
-    def test_compute_slack_no_ff_warning(self, ds, inv_path, default_config):
+    def test_compute_slack_no_ff_warning(self, ds, inv_path, default_config, caplog):
         """compute_slack warns when no launch FF is found."""
+        import logging
+        caplog.set_level(logging.INFO)
         cfg = AnalysisConfig(period_ns=1.0)
         res = resolve_manual(inv_path, ds, cfg)
         prop = propagate(res.stages, res.initial_slew_ns)
         result = compute_slack(prop, res.stages, cfg)
-        assert any("launch FF" in w for w in result.warnings)
+        assert any("launch sequential element" in record.message for record in caplog.records)
 
     # -- estimate_path_delay end-to-end with slack -------------------------
 

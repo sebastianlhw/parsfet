@@ -28,6 +28,18 @@ class PinPhysical:
     direction: str  # "input", "output", "inout"
     layers: list[str] = field(default_factory=list)
     use: str | None = None  # "signal", "power", "ground", "clock"
+    area_by_layer: dict[str, float] = field(default_factory=dict)
+    """Sum of pin shape rectangle areas per layer, in um².
+
+    Includes all pins (signal, power, ground, clock). May overestimate the
+    true metal area if port rectangles overlap.
+    """
+    ports: list[dict] = field(default_factory=list)
+    """Raw port rectangles as dicts with keys: layer, x1, y1, x2, y2 (all in um).
+
+    Only populated when constructing from a full Macro model. Used when
+    export_to_json(include_port_geometry=True) is requested.
+    """
 
     @classmethod
     def from_macro_pin(cls, pin: MacroPin) -> PinPhysical:
@@ -37,6 +49,11 @@ class PinPhysical:
             direction=pin.direction,
             layers=pin.layers_used,
             use=pin.use,
+            area_by_layer=pin.pin_shape_area_by_layer,
+            ports=[
+                {"layer": r.layer, "x1": r.x1, "y1": r.y1, "x2": r.x2, "y2": r.y2}
+                for r in pin.ports
+            ],
         )
 
 
@@ -57,6 +74,12 @@ class CellPhysical:
     height: float
     area: float
     pins: dict[str, PinPhysical] = field(default_factory=dict)
+    obs_area_by_layer: dict[str, float] = field(default_factory=dict)
+    """Sum of OBS rectangle areas per layer, in um².
+
+    May overestimate the true blocked area because foundry OBS regions
+    frequently use overlapping rectangles.
+    """
 
     @classmethod
     def from_macro(cls, macro: Macro) -> CellPhysical:
@@ -68,6 +91,7 @@ class CellPhysical:
             height=macro.height,
             area=macro.area,
             pins=pins,
+            obs_area_by_layer=macro.obs_shape_area_by_layer,
         )
 
 

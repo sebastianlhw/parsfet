@@ -198,6 +198,19 @@ class MacroPin(BaseModel):
         """Returns list of unique layer names used by this pin's ports."""
         return list({port.layer for port in self.ports})
 
+    @property
+    def pin_shape_area_by_layer(self) -> dict[str, float]:
+        """Total pin shape area per layer, in um².
+
+        This is the sum of constituent rectangle areas grouped by layer name.
+        Note: if a pin's port rectangles overlap (uncommon but possible in
+        foundry cells), this value is an overestimate of the true metal area.
+        """
+        totals: dict[str, float] = {}
+        for rect in self.ports:
+            totals[rect.layer] = totals.get(rect.layer, 0.0) + rect.area
+        return totals
+
 
 class Macro(BaseModel):
     """Represents a physical macro (cell) definition.
@@ -251,6 +264,20 @@ class Macro(BaseModel):
     def area(self) -> float:
         """Returns the area of the macro."""
         return self.size[0] * self.size[1]
+
+    @property
+    def obs_shape_area_by_layer(self) -> dict[str, float]:
+        """Total obstruction (OBS) shape area per layer, in um².
+
+        This is the sum of constituent obstruction rectangle areas grouped by
+        layer name. OBS regions in foundry LEF files frequently use overlapping
+        rectangles to cover non-rectangular regions, so this value may
+        overestimate the true blocked area on a given layer.
+        """
+        totals: dict[str, float] = {}
+        for rect in self.obstructions:
+            totals[rect.layer] = totals.get(rect.layer, 0.0) + rect.area
+        return totals
 
     model_config = {"extra": "allow"}
 

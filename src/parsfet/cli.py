@@ -230,6 +230,12 @@ def normalize(
     tech_lef: Optional[Path] = typer.Option(
         None, "--tech-lef", "-t", help="TechLEF file for technology rules"
     ),
+    include_port_geometry: bool = typer.Option(
+        False,
+        "--include-port-geometry",
+        help="Include raw pin port rectangles (x1,y1,x2,y2) in JSON output. "
+             "Increases file size significantly; use for PAA or GNN workflows.",
+    ),
 ):
     """Normalizes library metrics to the INVD1 baseline.
 
@@ -316,7 +322,7 @@ def normalize(
         )
 
         if output:
-            ds.save_json(output)
+            ds.save_json(output, include_port_geometry=include_port_geometry)
             console.print(f"[green]Saved combined data to:[/green] {output}")
 
     else:
@@ -583,6 +589,12 @@ def combine(
         False, "--allow-duplicates", help="Allow duplicates (first wins)"
     ),
     baseline: Optional[str] = typer.Option(None, "--baseline", "-b", help="Baseline cell name"),
+    include_port_geometry: bool = typer.Option(
+        False,
+        "--include-port-geometry",
+        help="Include raw pin port rectangles (x1,y1,x2,y2) in JSON output. "
+             "Increases file size significantly; use for PAA or GNN workflows.",
+    ),
 ):
     """Combines multiple Liberty or JSON files into one unified dataset.
 
@@ -705,7 +717,7 @@ def combine(
 
     # Save output
     if output:
-        combined.save_json(output)
+        combined.save_json(output, include_port_geometry=include_port_geometry)
         console.print(f"[green]Saved to:[/green] {output}")
     elif not check_duplicates:
         console.print("[yellow]Tip:[/yellow] Use --output to save the combined data.")
