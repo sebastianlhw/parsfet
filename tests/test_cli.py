@@ -175,6 +175,29 @@ def test_cli_combine(runner, sample_liberty_file):
         assert len(data["cells"]) > 0
 
 
+def test_cli_check_duplicates_clean(runner, sample_liberty_file):
+    """--check-duplicates exits 0 with a clean message when no duplicates exist."""
+    result = runner.invoke(
+        app, ["combine", str(sample_liberty_file), "--check-duplicates"]
+    )
+    assert result.exit_code == 0
+    assert "No duplicate cells found" in result.stdout
+    # Must NOT proceed to combine
+    assert "Combined Dataset" not in result.stdout
+
+
+def test_cli_check_duplicates_found(runner, sample_liberty_file):
+    """--check-duplicates exits 0 and lists duplicates (does NOT error out)."""
+    result = runner.invoke(
+        app, ["combine", str(sample_liberty_file), str(sample_liberty_file), "--check-duplicates"]
+    )
+    assert result.exit_code == 0
+    assert "duplicate cell" in result.stdout.lower()
+    assert "--allow-duplicates" in result.stdout
+    # Must NOT proceed to combine
+    assert "Combined Dataset" not in result.stdout
+
+
 def test_cli_combine_include_port_geometry(runner, sample_liberty_file, sample_lef_file):
     output_file = Path("combined_ports.json")
     with runner.isolated_filesystem():

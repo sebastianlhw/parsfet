@@ -34,7 +34,7 @@ from parsfet.path_delay import (
 @pytest.fixture
 def ds(sample_liberty_file):
     """Loaded dataset with INV_X1 (NLDM) and DFF_X1 (sequential)."""
-    return load_files([sample_liberty_file])
+    return load_files([sample_liberty_file]).resolve()
 
 
 @pytest.fixture

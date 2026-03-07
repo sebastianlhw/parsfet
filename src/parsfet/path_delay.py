@@ -427,26 +427,22 @@ def resolve_manual(
     Raises:
         ValueError: If no entries loaded or if the path is empty.
     """
+    dataset.resolve()   # trigger lazy combine before accessing library
     if not dataset.entries:
         raise ValueError("No entries loaded. Call load_files() first.")
     if not path:
         raise ValueError("path must contain at least one PathSpec.")
 
-    # Build name-keyed Liberty Cell dict (first entry wins for duplicates).
-    lib_cell_tuples: dict[str, tuple] = {}  # name → (Cell, t_div, c_div, t_mul)
-    if len(dataset.entries) > 1:
-        logger.warning(
-            "Multiple library entries detected. NLDM arc evaluation uses first-entry-wins "
-            "for duplicate cell names. Call combine() for consistent behaviour."
-        )
-    for e in reversed(dataset.entries):
-        if e.library:
-            t_mul = e.library.time_unit_ns   # lib_unit → ns
-            c_mul = e.library.cap_unit_pf    # lib_unit → pF
-            t_div = 1.0 / t_mul if t_mul else 1.0
-            c_div = 1.0 / c_mul if c_mul else 1.0
-            for c in e.library.cells.values():
-                lib_cell_tuples[c.name] = (c, t_div, c_div, t_mul, c_mul)
+    # Build name-keyed Liberty Cell dict from the single combined entry.
+    lib_cell_tuples: dict[str, tuple] = {}  # name → (Cell, t_div, c_div, t_mul, c_mul)
+    lib = dataset.library
+    if lib:
+        t_mul = lib.time_unit_ns   # lib_unit → ns
+        c_mul = lib.cap_unit_pf    # lib_unit → pF
+        t_div = 1.0 / t_mul if t_mul else 1.0
+        c_div = 1.0 / c_mul if c_mul else 1.0
+        for c in lib.cells.values():
+            lib_cell_tuples[c.name] = (c, t_div, c_div, t_mul, c_mul)
 
     # Default initial slew: explicit config value  →  clock_slew_ns (a standard
     # process-agnostic timing parameter defined in AnalysisConfig).

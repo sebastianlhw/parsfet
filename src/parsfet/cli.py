@@ -290,23 +290,22 @@ def normalize(
             ds.load_tech_lef(tech_lef)
             console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
 
-        entry = ds.entries[0]
-        if not entry.normalizer:
+        if not ds.normalizer:
             console.print("[red]Error:[/red] No baseline inverter found in library")
             raise typer.Exit(1)
 
-        summary = entry.normalizer.get_summary()
+        summary = ds.normalizer.get_summary()
 
         # Display summary
         phys_info = ""
-        if entry.lef_cells:
-            phys_info += f"\n[bold]LEF Cells Matched:[/] {len(entry.lef_cells)}"
-        if entry.tech_info:
-            phys_info += f"\n[bold]Metal Stack:[/] {entry.tech_info.metal_stack_height} layers"
+        if ds.lef_cells:
+            phys_info += f"\n[bold]LEF Cells Matched:[/] {len(ds.lef_cells)}"
+        if ds.tech_info:
+            phys_info += f"\n[bold]Metal Stack:[/] {ds.tech_info.metal_stack_height} layers"
 
         console.print(
             Panel.fit(
-                f"[bold green]Library:[/] {entry.library.name}\n"
+                f"[bold green]Library:[/] {ds.library.name}\n"
                 f"[bold]Baseline Cell:[/] {summary['baseline_cell']}\n"
                 f"[bold]Total Cells:[/] {summary['total_cells']}\n\n"
                 f"[bold]Area Ratios:[/]\n"
@@ -492,7 +491,7 @@ def fingerprint(
     ds = Dataset()
     ds.load_files([lib_file])
 
-    if not ds.entries or not ds.entries[0].normalizer:
+    if not ds.normalizer:
         console.print("[red]Error:[/red] No baseline inverter found in library")
         raise typer.Exit(1)
 
@@ -642,42 +641,69 @@ def combine(
             console.print(f"[red]Error:[/red] File not found: {f}")
             raise typer.Exit(1)
 
-    # Load files without immediate normalization
+    # Load files (staged — combine happens explicitly below)
     ds = Dataset()
-    ds.load_files(lib_files, normalize=False)
+    ds.load_files(lib_files)
 
-    console.print(f"[blue]Loaded {len(ds.entries)} libraries:[/blue]")
+    console.print(f"[blue]Loaded {len(ds._pending_libs)} libraries:[/blue]")
     total_cells = 0
-    for entry in ds.entries:
-        cell_count = len(entry.library.cells)
+    for kind, obj, path in ds._pending_libs:
+        lib_obj = obj.library if kind == "json_entry" else obj
+        cell_count = len(lib_obj.cells)
         total_cells += cell_count
-        console.print(f"  • {entry.library.name}: {cell_count} cells")
+        lib_name = lib_obj.name if hasattr(lib_obj, "name") else str(path)
+        console.print(f"  • {lib_name}: {cell_count} cells")
 
-    # Check for duplicates
+    # Stage LEF/TechLEF before combine so they're included in the combined entry
+    if lef:
+        for lef_path in lef:
+            if not lef_path.exists():
+                console.print(f"[red]Error:[/red] LEF file not found: {lef_path}")
+                raise typer.Exit(1)
+        ds.load_lef(lef)
+        console.print(f"[blue]Loaded LEF:[/blue] {len(lef)} file(s)")
+
+    if tech_lef:
+        if not tech_lef.exists():
+            console.print(f"[red]Error:[/red] TechLEF file not found: {tech_lef}")
+            raise typer.Exit(1)
+        ds.load_tech_lef(tech_lef)
+        console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
+
+    # Check for duplicates (operates on staging queue before combine)
     duplicates = ds.find_duplicates()
-    if duplicates:
+
+    if check_duplicates:
+        # Report-only mode: always exit after showing duplicate status
+        if duplicates:
+            console.print(f"\n[yellow]Found {len(duplicates)} duplicate cell(s):[/yellow]")
+            for cell, sources in list(duplicates.items())[:10]:
+                files = ", ".join(s.name for _, s in sources)
+                console.print(f"  • {cell}: {files}")
+            if len(duplicates) > 10:
+                console.print(f"  ... and {len(duplicates) - 10} more")
+            console.print(
+                "\n[blue]Use --allow-duplicates to proceed with first-occurrence-wins.[/blue]"
+            )
+        else:
+            console.print("[green]✓ No duplicate cells found.[/green]")
+        raise typer.Exit(0)
+
+    if duplicates and not allow_duplicates:
         console.print(f"\n[yellow]Found {len(duplicates)} duplicate cell(s):[/yellow]")
-        for cell, sources in list(duplicates.items())[:10]:  # Show first 10
+        for cell, sources in list(duplicates.items())[:10]:
             files = ", ".join(s.name for _, s in sources)
             console.print(f"  • {cell}: {files}")
         if len(duplicates) > 10:
             console.print(f"  ... and {len(duplicates) - 10} more")
-
-        if check_duplicates:
-            console.print(
-                "\n[blue]Use --allow-duplicates to proceed with first-occurrence-wins.[/blue]"
-            )
-            raise typer.Exit(0)
-
-        if not allow_duplicates:
-            console.print(
-                "\n[red]Error:[/red] Duplicate cells found. Use --allow-duplicates to proceed."
-            )
-            raise typer.Exit(1)
+        console.print(
+            "\n[red]Error:[/red] Duplicate cells found. Use --allow-duplicates to proceed."
+        )
+        raise typer.Exit(1)
 
     # Combine with unified normalization
     try:
-        combined = ds.combine(allow_duplicates=allow_duplicates, baseline=baseline)
+        ds.combine(allow_duplicates=allow_duplicates, baseline=baseline)
     except DuplicateCellError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
@@ -685,30 +711,13 @@ def combine(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-    # Load LEF/TechLEF if provided
-    if lef:
-        for lef_path in lef:
-            if not lef_path.exists():
-                console.print(f"[red]Error:[/red] LEF file not found: {lef_path}")
-                raise typer.Exit(1)
-        combined.load_lef(lef)
-        console.print(f"[blue]Loaded LEF:[/blue] {len(lef)} file(s)")
-
-    if tech_lef:
-        if not tech_lef.exists():
-            console.print(f"[red]Error:[/red] TechLEF file not found: {tech_lef}")
-            raise typer.Exit(1)
-        combined.load_tech_lef(tech_lef)
-        console.print(f"[blue]Loaded TechLEF:[/blue] {tech_lef.name}")
-
     # Display summary
-    entry = combined.entries[0]
-    baseline_name = entry.normalizer.baseline_cell.name if entry.normalizer else "N/A"
+    baseline_name = ds.baseline.name if ds.baseline else "N/A"
 
     console.print(
         Panel.fit(
             f"[bold green]Combined Dataset[/]\n"
-            f"[bold]Total Cells:[/] {len(entry.library.cells)}\n"
+            f"[bold]Total Cells:[/] {len(ds.library.cells)}\n"
             f"[bold]Baseline:[/] {baseline_name}\n"
             f"[bold]Source Files:[/] {len(lib_files)}",
             title="Combine Summary",
@@ -717,7 +726,7 @@ def combine(
 
     # Save output
     if output:
-        combined.save_json(output, include_port_geometry=include_port_geometry)
+        ds.save_json(output, include_port_geometry=include_port_geometry)
         console.print(f"[green]Saved to:[/green] {output}")
     elif not check_duplicates:
         console.print("[yellow]Tip:[/yellow] Use --output to save the combined data.")
@@ -790,44 +799,30 @@ def report(
         validate_assets()
 
         console.print(f"Loading {len(lib_files)} libraries...")
-        
-        # Use Dataset API to load and normalize all libraries consistently
+
         ds = Dataset()
         ds.load_files(lib_files)
-        
-        entries_to_report = ds.entries
 
         if combine:
             console.print("Combining libraries...")
             try:
-                # combine() returns a new Dataset with a single entry
-                combined_ds = ds.combine(allow_duplicates=allow_duplicates)
-                entries_to_report = combined_ds.entries
+                ds.combine(allow_duplicates=allow_duplicates)
             except DuplicateCellError as e:
                 console.print(f"[red]Error:[/red] {e}")
                 console.print("[yellow]Hint:[/yellow] Use --allow-duplicates to force merge (first wins).")
                 raise typer.Exit(1)
-        
-        # Ensure we have a baseline (Dataset normalization handles comparison baselines if implemented, 
-        # but here we rely on the primary entry's behavior or individual normalization)
-        # Note: Dataset.load_files does NOT auto-normalize unless we tell it to, 
-        # but the current implementation of Dataset.load_files might. 
-        # Let's check Dataset implementation or just proceed assuming we normalize manually if needed.
-        # Actually, Dataset.load_files defaults to normalize=True (inferred).
-        
-        # If the user specified a baseline name, we might need to re-normalize or hint it.
-        # The current Dataset API might not propagate `baseline` arg to internal normalizers easily.
-        # However, for this task, let's assume auto-detection or update normalized entries.
-        
+
+        ds.resolve()
+        entries_to_report = ds.entries
+
         if baseline:
-             # Re-normalize with explicit baseline if requested
-             from .normalizers.invd1 import INVD1Normalizer
-             for entry in entries_to_report:
-                 entry.normalizer = INVD1Normalizer(entry.library, baseline_name=baseline)
-        
+            from .normalizers.invd1 import INVD1Normalizer
+            for entry in entries_to_report:
+                entry.normalizer = INVD1Normalizer(entry.library, baseline_name=baseline)
+
         console.print(f"Generating report to {output}...")
         generate_report(entries_to_report, output)
-        
+
         console.print(f"[green]Report generated:[/green] {output}")
 
     except RuntimeError as e:

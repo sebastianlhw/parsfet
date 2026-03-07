@@ -236,7 +236,7 @@ class TestFindDuplicates:
     def test_no_duplicates(self, lib1_file, lib2_file):
         """Two files with no overlapping cells should have no duplicates."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib2_file], normalize=False)
+        ds.load_files([lib1_file, lib2_file])
 
         dups = ds.find_duplicates()
         assert dups == {}
@@ -244,7 +244,7 @@ class TestFindDuplicates:
     def test_with_duplicates(self, lib1_file, lib3_file):
         """Two files with overlapping INV_X1 should detect duplicate."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib3_file], normalize=False)
+        ds.load_files([lib1_file, lib3_file])
 
         dups = ds.find_duplicates()
         assert "INV_X1" in dups
@@ -253,7 +253,7 @@ class TestFindDuplicates:
     def test_single_file_no_duplicates(self, lib1_file):
         """Single file should never have duplicates."""
         ds = Dataset()
-        ds.load_files([lib1_file], normalize=False)
+        ds.load_files([lib1_file])
 
         dups = ds.find_duplicates()
         assert dups == {}
@@ -265,19 +265,19 @@ class TestCombine:
     def test_combine_no_duplicates(self, lib1_file, lib2_file):
         """Combining files with distinct cells should succeed."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib2_file], normalize=False)
+        ds.load_files([lib1_file, lib2_file])
 
-        combined = ds.combine()
+        ds.combine()
 
-        assert len(combined.entries) == 1
+        assert len(ds.entries) == 1
         # Should have all 4 cells: INV_X1, NAND2_X1, NOR2_X1, BUF_X1
-        assert len(combined.entries[0].library.cells) == 4
-        assert combined.entries[0].normalizer is not None
+        assert len(ds.entries[0].library.cells) == 4
+        assert ds.entries[0].normalizer is not None
 
     def test_combine_with_duplicates_raises(self, lib1_file, lib3_file):
         """Combining files with duplicates should raise DuplicateCellError."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib3_file], normalize=False)
+        ds.load_files([lib1_file, lib3_file])
 
         with pytest.raises(DuplicateCellError) as exc_info:
             ds.combine()
@@ -288,31 +288,33 @@ class TestCombine:
     def test_combine_allow_duplicates(self, lib1_file, lib3_file):
         """Combining with allow_duplicates=True should use first occurrence."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib3_file], normalize=False)
+        ds.load_files([lib1_file, lib3_file])
 
-        combined = ds.combine(allow_duplicates=True)
+        ds.combine(allow_duplicates=True)
 
-        assert len(combined.entries) == 1
+        assert len(ds.entries) == 1
         # INV_X1 should come from lib1 (area=1.5, not 1.8)
-        inv_cell = combined.entries[0].library.cells["INV_X1"]
+        inv_cell = ds.entries[0].library.cells["INV_X1"]
         assert inv_cell.area == 1.5
 
-    def test_combine_empty_raises(self):
-        """Combining empty dataset should raise ValueError."""
+    def test_combine_empty_returns_empty(self):
+        """An empty dataset produces an empty DataFrame — no error."""
+        import pandas as pd
         ds = Dataset()
 
-        with pytest.raises(ValueError, match="No entries loaded"):
-            ds.combine()
+        df = ds.to_dataframe()
+        assert isinstance(df, pd.DataFrame)
+        assert df.empty
 
     def test_combine_preserves_metrics(self, lib1_file, lib2_file):
         """Combined dataset should have normalized metrics for all cells."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib2_file], normalize=False)
+        ds.load_files([lib1_file, lib2_file])
 
-        combined = ds.combine()
+        ds.combine()
 
         # All cells should have metrics
-        metrics = combined.entries[0].metrics
+        metrics = ds.entries[0].metrics
         assert "INV_X1" in metrics
         assert "NAND2_X1" in metrics
         assert "NOR2_X1" in metrics
@@ -321,17 +323,17 @@ class TestCombine:
     def test_combine_explicit_baseline(self, lib1_file):
         """Combining with explicit baseline should use that cell."""
         ds = Dataset()
-        ds.load_files([lib1_file], normalize=False)
+        ds.load_files([lib1_file])
 
         # INV_X1 is in lib1
-        combined = ds.combine(baseline="INV_X1")
+        ds.combine(baseline="INV_X1")
 
-        assert combined.entries[0].normalizer.baseline_cell.name == "INV_X1"
+        assert ds.entries[0].normalizer.baseline_cell.name == "INV_X1"
 
     def test_combine_explicit_baseline_missing(self, lib1_file):
         """Combining with missing baseline should raise ValueError."""
         ds = Dataset()
-        ds.load_files([lib1_file], normalize=False)
+        ds.load_files([lib1_file])
 
         with pytest.raises(ValueError, match="No baseline cell found"):
             ds.combine(baseline="MISSING_CELL")
@@ -353,10 +355,9 @@ class TestDataFrameSourceFile:
     def test_source_file_combined(self, lib1_file, lib2_file):
         """Combined dataset should track source files per cell."""
         ds = Dataset()
-        ds.load_files([lib1_file, lib2_file], normalize=False)
-        combined = ds.combine()
+        ds.load_files([lib1_file, lib2_file])
 
-        df = combined.to_dataframe()
+        df = ds.to_dataframe()  # triggers combine
 
         assert "source_file" in df.columns
         # Cells from different libs should have different source files

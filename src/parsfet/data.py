@@ -109,75 +109,55 @@ class Dataset:
         self._parser = LibertyParser()
         self._lef_parser = LEFParser()
         self._tech_lef_parser = TechLEFParser()
+        # Staging queues — populated by load_* calls, flushed by _ensure_combined()
+        self._pending_libs: list[tuple] = []   # (LibertyLibrary | json_entry, Path | None)
+        self._pending_lefs: list[tuple] = []   # (paths, name_mapper)
+        self._pending_tech_lef: Optional[Path] = None
+        self._combined: bool = False            # True once _do_combine() has run
+        self._combine_opts: dict = {}           # baseline / allow_duplicates overrides
 
-    def load_files(self, paths: list[Path | str], normalize: bool = True) -> "Dataset":
-        """Load a list of Liberty or JSON files.
+    def load_files(self, paths: list[Path | str]) -> "Dataset":
+        """Stage a list of Liberty or JSON files for loading.
+
+        Files are parsed immediately but normalization and combining happen
+        lazily on first access (``to_dataframe()``, ``query_cell_at()``, etc.).
+        To combine multiple VT libraries into one Dataset, simply call
+        ``load_files()`` multiple times or pass all paths at once.
 
         Args:
             paths: List of file paths (Path or str) to Liberty (.lib) or
                 previously-exported JSON (.json) files.
-            normalize: If True, normalize cells immediately (original behavior).
-                If False, defer normalization for later combine() call.
 
         Returns:
             self, for method chaining.
 
         Raises:
             FileNotFoundError: If a file does not exist.
-            ValueError: If no baseline cell is found and normalize=True.
         """
         for p in paths:
             path = Path(p)
             if not path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
-
-            # Dispatch based on file extension
             if path.suffix.lower() == ".json":
-                self._load_json_file(path, normalize=normalize)
+                self._stage_json_file(path)
             else:
-                # Assume Liberty format (.lib or .lib.gz)
-                self._load_lib_file(path, normalize=normalize)
-
+                self._stage_lib_file(path)
+        self._combined = False  # Invalidate — new content pending
         return self
 
-    def _load_lib_file(self, path: Path, normalize: bool = True) -> None:
-        """Load a single Liberty file."""
+    def _stage_lib_file(self, path: Path) -> None:
+        """Parse a Liberty file and add it to the staging queue."""
         lib = self._parser.parse(path)
+        self._pending_libs.append(("lib", lib, path))
 
-        if normalize:
-            try:
-                normalizer = INVD1Normalizer(lib)
-                metrics = normalizer.normalize_all()
-            except ValueError:
-                # No baseline cell - skip normalization
-                normalizer = None
-                metrics = {}
-        else:
-            normalizer = None
-            metrics = {}
-
-        self.entries.append(
-            LibraryEntry(
-                library=lib,
-                normalizer=normalizer,
-                metrics=metrics,
-                source_file=path,
-            )
-        )
-
-    def _load_json_file(self, path: Path, normalize: bool = True) -> None:
-        """Load a previously-exported JSON file.
-
-        Creates a minimal LibertyLibrary from the JSON data to enable
-        re-normalization with combine().
-        """
+    def _stage_json_file(self, path: Path) -> None:
+        """Parse a JSON export and add it to the staging queue."""
         from .models.export import ExportedLibrary
         from .models.liberty import Cell, LibertyLibrary
 
-        # Load and validate JSON
         exported = ExportedLibrary.from_json_file(str(path))
 
-        # Create minimal Cell objects from exported data
+        # Reconstruct minimal Cell objects
         cells: dict[str, Cell] = {}
         for cell_name, exported_cell in exported.cells.items():
             raw = exported_cell.raw
@@ -187,11 +167,8 @@ class Dataset:
                     area=raw.area_um2,
                     cell_leakage_power=raw.leakage,
                     is_sequential=exported_cell.is_sequential,
-                    # Note: We don't have timing arcs, but that's OK -
-                    # normalize_from_raw() will be used instead
                 )
             else:
-                # Fallback: reconstruct from ratios
                 cells[cell_name] = Cell(
                     name=cell_name,
                     area=exported_cell.area_ratio * exported.baseline.area_um2,
@@ -199,13 +176,8 @@ class Dataset:
                     is_sequential=exported_cell.is_sequential,
                 )
 
-        # Create minimal LibertyLibrary
-        lib = LibertyLibrary(
-            name=exported.library,
-            cells=cells,
-        )
+        lib = LibertyLibrary(name=exported.library, cells=cells)
 
-        # Store raw metrics for later use in combine()
         raw_metrics_cache = {}
         for cell_name, exported_cell in exported.cells.items():
             if exported_cell.raw:
@@ -221,56 +193,41 @@ class Dataset:
                     "is_sequential": exported_cell.is_sequential,
                 }
 
-        # Create entry (normalization happens in combine() using raw metrics)
         entry = LibraryEntry(
             library=lib,
-            normalizer=None,  # Will be set during combine()
+            normalizer=None,
             metrics={},
             source_file=path,
             from_json=True,
             raw_metrics_cache=raw_metrics_cache,
         )
-
-        self.entries.append(entry)
+        self._pending_libs.append(("json_entry", entry, path))
 
     def load_lef(
         self,
         paths: list[Path | str],
         name_mapper: Optional[Callable[[str], str]] = None,
     ) -> "Dataset":
-        """Load LEF files and match macros to Liberty cells by name.
+        """Stage LEF files to be matched to Liberty cells on first data access.
 
         Args:
             paths: List of file paths to LEF files.
             name_mapper: Optional function to transform Liberty cell names
-                before looking up in LEF macros. Useful when naming conventions
-                differ (e.g., `lambda n: n.replace("_X", "D")`).
+                before looking up in LEF macros.
 
         Returns:
             self, for method chaining.
         """
-        # Parse all LEF files and collect macros
-        all_macros: dict[str, CellPhysical] = {}
         for p in paths:
             path = Path(p)
             if not path.exists():
                 raise FileNotFoundError(f"LEF file not found: {path}")
-
-            lef_lib = self._lef_parser.parse(path)
-            for macro_name, macro in lef_lib.macros.items():
-                all_macros[macro_name] = CellPhysical.from_macro(macro)
-
-        # Match to Liberty cells in each entry
-        for entry in self.entries:
-            for cell_name in entry.metrics.keys():
-                lookup_name = name_mapper(cell_name) if name_mapper else cell_name
-                if lookup_name in all_macros:
-                    entry.lef_cells[cell_name] = all_macros[lookup_name]
-
+        self._pending_lefs.append(([Path(p) for p in paths], name_mapper))
+        self._combined = False
         return self
 
     def load_tech_lef(self, path: Path | str) -> "Dataset":
-        """Load a TechLEF file for technology context.
+        """Stage a TechLEF file for technology context.
 
         Args:
             path: Path to the TechLEF file.
@@ -281,14 +238,8 @@ class Dataset:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"TechLEF file not found: {path}")
-
-        tech_lef = self._tech_lef_parser.parse(path)
-        tech_info = TechInfo.from_tech_lef(tech_lef)
-
-        # Apply to all entries
-        for entry in self.entries:
-            entry.tech_info = tech_info
-
+        self._pending_tech_lef = path
+        self._combined = False
         return self
 
     def find_duplicates(self) -> dict[str, list[tuple[int, Path]]]:
@@ -307,9 +258,10 @@ class Dataset:
         """
         cell_sources: dict[str, list[tuple[int, Path]]] = {}
 
-        for idx, entry in enumerate(self.entries):
-            source = entry.source_file or Path(f"<entry_{idx}>")
-            for cell_name in entry.library.cells.keys():
+        for idx, (kind, obj, path) in enumerate(self._pending_libs):
+            lib = obj.library if kind == "json_entry" else obj
+            source = path or Path(f"<entry_{idx}>")
+            for cell_name in lib.cells.keys():
                 if cell_name not in cell_sources:
                     cell_sources[cell_name] = []
                 cell_sources[cell_name].append((idx, source))
@@ -317,104 +269,91 @@ class Dataset:
         # Filter to only cells appearing in multiple entries
         return {name: sources for name, sources in cell_sources.items() if len(sources) > 1}
 
-    def combine(self, allow_duplicates: bool = False, baseline: Optional[str] = None) -> "Dataset":
-        """Combine all entries into ONE grand dataset with unified normalization.
+    def _ensure_combined(self) -> None:
+        """Trigger lazy combine if not already done. Called internally by all read methods."""
+        if not self._combined:
+            self._do_combine(**self._combine_opts)
 
-        This method merges all cells from all loaded libraries (including
-        previously-exported JSON files) into a single unified dataset.
-        A baseline inverter is found from the combined cell pool, and ALL
-        cells are re-normalized against this single baseline.
+    def _do_combine(
+        self,
+        allow_duplicates: bool = False,
+        baseline: Optional[str] = None,
+    ) -> None:
+        """Internal: flush all staged libs/LEFs/TechLEF into a single combined entry."""
+        from .models.liberty import Cell, LibertyLibrary
 
-        Args:
-            allow_duplicates: If False (default), raise DuplicateCellError when
-                cells with the same name appear in multiple files. If True,
-                first occurrence wins and later occurrences are ignored.
-            baseline: Optional. Name of the baseline cell to use.
-                If not provided, the normalizer tries to auto-detect "INVD1"
-                or similar standard inverters.
+        # Build entry list from staging queue (in order)
+        stage_entries: list[LibraryEntry] = []
+        for kind, obj, path in self._pending_libs:
+            if kind == "lib":
+                stage_entries.append(LibraryEntry(
+                    library=obj,
+                    normalizer=None,
+                    metrics={},
+                    source_file=path,
+                ))
+            else:  # json_entry
+                stage_entries.append(obj)
 
-        Returns:
-            A new Dataset with one unified LibraryEntry containing all cells.
+        if not stage_entries:
+            self._combined = True
+            return
 
-        Raises:
-            DuplicateCellError: If duplicates found and allow_duplicates=False.
-            ValueError: If no entries loaded or no baseline cell found.
-
-        Example:
-            >>> ds = Dataset()
-            >>> ds.load_files(["lib1.lib", "export.json"], normalize=False)
-            >>> combined = ds.combine()
-            >>> df = combined.to_dataframe()  # Unified normalization
-        """
-        if not self.entries:
-            raise ValueError("No entries loaded. Call load_files() first.")
-
-        # Check for duplicates
-        duplicates = self.find_duplicates()
+        # Duplicate detection
+        cell_sources: dict[str, list[tuple[int, Path]]] = {}
+        for idx, e in enumerate(stage_entries):
+            src = e.source_file or Path(f"<entry_{idx}>")
+            for cell_name in e.library.cells:
+                cell_sources.setdefault(cell_name, []).append((idx, src))
+        duplicates = {n: s for n, s in cell_sources.items() if len(s) > 1}
         if duplicates and not allow_duplicates:
             raise DuplicateCellError(duplicates)
 
-        # Merge all cells into a combined library
-        # Use first entry as base and merge cells from others
-        from .models.liberty import Cell, LibertyLibrary
-
-        base_entry = self.entries[0]
+        # Merge cells (first wins on duplicate)
         combined_cells: dict[str, Cell] = {}
-        cell_sources: dict[str, Path] = {}  # Track origin for each cell
-
-        # Build index: source_path → entry (for O(1) lookup during normalization)
-        entry_by_source: dict[Path, LibraryEntry] = {}
-        for entry in self.entries:
-            source = entry.source_file or Path("<unknown>")
-            entry_by_source[source] = entry
-
-        # Collect all cells (single pass)
-        for entry in self.entries:
-            source = entry.source_file or Path("<unknown>")
-            for cell_name, cell in entry.library.cells.items():
+        cell_origin: dict[str, int] = {}  # cell_name -> entry index
+        for idx, e in enumerate(stage_entries):
+            for cell_name, cell in e.library.cells.items():
                 if cell_name not in combined_cells:
                     combined_cells[cell_name] = cell
-                    cell_sources[cell_name] = source
-                # else: duplicate, skip (first wins)
+                    cell_origin[cell_name] = idx
 
-        # Create a combined library using the first library's metadata
+        base = stage_entries[0]
         combined_lib = LibertyLibrary(
-            name=f"combined_{len(self.entries)}_libs",
-            technology=base_entry.library.technology,
-            delay_model=base_entry.library.delay_model,
-            time_unit=base_entry.library.time_unit,
-            capacitive_load_unit=base_entry.library.capacitive_load_unit,
-            voltage_unit=base_entry.library.voltage_unit,
-            current_unit=base_entry.library.current_unit,
-            leakage_power_unit=base_entry.library.leakage_power_unit,
-            pulling_resistance_unit=base_entry.library.pulling_resistance_unit,
-            nom_voltage=base_entry.library.nom_voltage,
-            nom_temperature=base_entry.library.nom_temperature,
-            nom_process=base_entry.library.nom_process,
-            operating_conditions=base_entry.library.operating_conditions,
-            vt_flavor=base_entry.library.vt_flavor,
-            process_node=base_entry.library.process_node,
-            foundry=base_entry.library.foundry,
-            lu_table_templates=base_entry.library.lu_table_templates,
+            name=f"combined_{len(stage_entries)}_libs" if len(stage_entries) > 1 else base.library.name,
+            technology=base.library.technology,
+            delay_model=base.library.delay_model,
+            time_unit=base.library.time_unit,
+            capacitive_load_unit=base.library.capacitive_load_unit,
+            voltage_unit=base.library.voltage_unit,
+            current_unit=base.library.current_unit,
+            leakage_power_unit=base.library.leakage_power_unit,
+            pulling_resistance_unit=base.library.pulling_resistance_unit,
+            nom_voltage=base.library.nom_voltage,
+            nom_temperature=base.library.nom_temperature,
+            nom_process=base.library.nom_process,
+            operating_conditions=base.library.operating_conditions,
+            vt_flavor=base.library.vt_flavor,
+            process_node=base.library.process_node,
+            foundry=base.library.foundry,
+            lu_table_templates=base.library.lu_table_templates,
             cells=combined_cells,
-            attributes=base_entry.library.attributes,
+            attributes=base.library.attributes,
         )
 
-        # Create normalizer from combined library (finds baseline from all cells)
         try:
             normalizer = INVD1Normalizer(combined_lib, baseline_name=baseline)
         except ValueError as e:
             raise ValueError(f"No baseline cell found in combined dataset: {e}") from e
 
-        # Normalize all cells (single pass with source-based dispatch)
         metrics: dict[str, NormalizedMetrics] = {}
+        cell_file_sources: dict[str, Path] = {}
         for cell_name, cell in combined_lib.cells.items():
-            source_path = cell_sources[cell_name]
-            source_entry = entry_by_source[source_path]
-
-            if source_entry.from_json and cell_name in source_entry.raw_metrics_cache:
-                # Use raw metrics from JSON
-                raw = source_entry.raw_metrics_cache[cell_name]
+            src_idx = cell_origin[cell_name]
+            src_entry = stage_entries[src_idx]
+            cell_file_sources[cell_name] = src_entry.source_file or Path("<unknown>")
+            if src_entry.from_json and cell_name in src_entry.raw_metrics_cache:
+                raw = src_entry.raw_metrics_cache[cell_name]
                 metrics[cell_name] = normalizer.normalize_from_raw(
                     cell_name=cell_name,
                     raw_area=raw["area"],
@@ -428,42 +367,233 @@ class Dataset:
                     is_sequential=raw.get("is_sequential", False),
                 )
             else:
-                # Use Cell object (from .lib file)
                 metrics[cell_name] = normalizer.normalize(cell)
 
-        # Merge LEF data
+        # Apply staged LEF data
         combined_lef: dict[str, CellPhysical] = {}
-        for entry in self.entries:
-            combined_lef.update(entry.lef_cells)
+        for lef_paths, name_mapper in self._pending_lefs:
+            all_macros: dict[str, CellPhysical] = {}
+            for p in lef_paths:
+                lef_lib = self._lef_parser.parse(p)
+                for macro_name, macro in lef_lib.macros.items():
+                    all_macros[macro_name] = CellPhysical.from_macro(macro)
+            for cell_name in combined_cells:
+                lookup = name_mapper(cell_name) if name_mapper else cell_name
+                if lookup in all_macros:
+                    combined_lef[cell_name] = all_macros[lookup]
 
-        # Use first available tech_info
+        # Apply staged TechLEF
         tech_info = None
-        for entry in self.entries:
-            if entry.tech_info:
-                tech_info = entry.tech_info
-                break
+        if self._pending_tech_lef:
+            tech_lef = self._tech_lef_parser.parse(self._pending_tech_lef)
+            tech_info = TechInfo.from_tech_lef(tech_lef)
 
-        # Create combined entry
         combined_entry = LibraryEntry(
             library=combined_lib,
             normalizer=normalizer,
             metrics=metrics,
             lef_cells=combined_lef,
             tech_info=tech_info,
-            source_file=None,  # Combined from multiple files
+            source_file=None,
         )
+        combined_entry._cell_sources = cell_file_sources  # type: ignore
 
-        # Store cell sources for provenance tracking
-        combined_entry._cell_sources = cell_sources  # type: ignore
+        self.entries = [combined_entry]
+        self._cell_sources = cell_file_sources
+        self._combined = True
 
-        # Create new dataset with combined entry
-        result = Dataset()
-        result.entries = [combined_entry]
-        result._cell_sources = cell_sources  # Store at dataset level too
+    def combine(self, allow_duplicates: bool = False, baseline: Optional[str] = None) -> "Dataset":
+        """Combine all staged libraries into ONE dataset with unified normalization.
 
-        return result
+        Calling this method is optional — all read methods (``to_dataframe()``,
+        ``query_cell_at()``, etc.) trigger combining automatically on first access.
+        Call ``combine()`` explicitly to control ``allow_duplicates`` or ``baseline``
+        before the first read, or to force a re-combine after adding more files.
+
+        Args:
+            allow_duplicates: If False (default), raise DuplicateCellError when
+                cells with the same name appear in multiple files. If True,
+                first occurrence wins.
+            baseline: Name of the baseline inverter cell to use for normalization.
+                Auto-detected if not provided.
+
+        Returns:
+            self, for method chaining.
+
+        Raises:
+            DuplicateCellError: If duplicates found and allow_duplicates=False.
+            ValueError: If no baseline cell found.
+
+        Example:
+            >>> ds = Dataset()
+            >>> ds.load_files(["svt.lib", "lvt.lib"])  # auto-combined on first access
+            >>> df = ds.to_dataframe()                  # triggers combine here
+
+            >>> # Or explicitly control options:
+            >>> ds.combine(allow_duplicates=True).to_dataframe()
+        """
+        self._combine_opts = {"allow_duplicates": allow_duplicates, "baseline": baseline}
+        self._combined = False  # Force re-combine with new opts
+        self._do_combine(allow_duplicates=allow_duplicates, baseline=baseline)
+        return self
+
+    # ------------------------------------------------------------------
+    # Public resolve + property accessors (P0/P1 API improvements)
+    # ------------------------------------------------------------------
+
+    def resolve(self) -> "Dataset":
+        """Trigger the lazy combine immediately and return self.
+
+        Calling this is equivalent to touching any read method, but makes
+        the intent explicit in scripts that inspect ``entries`` directly.
+        Idempotent — safe to call multiple times.
+
+        Returns:
+            self, for method chaining.
+
+        Example::
+
+            >>> ds = Dataset().load_files(["svt.lib", "lvt.lib"]).resolve()
+            >>> lib = ds.library   # always populated after resolve()
+        """
+        self._ensure_combined()
+        return self
+
+    @property
+    def library(self):
+        """The combined :class:`~parsfet.models.liberty.LibertyLibrary`.
+
+        Triggers lazy combine on first access.
+
+        Raises:
+            ValueError: If no libraries have been loaded.
+
+        Example::
+
+            >>> ds = Dataset().load_files(["lib.lib"])
+            >>> print(ds.library.name)
+        """
+        self._ensure_combined()
+        if not self.entries:
+            raise ValueError("No libraries loaded.")
+        return self.entries[0].library
+
+    @property
+    def normalizer(self):
+        """The :class:`~parsfet.normalizers.invd1.INVD1Normalizer` for the combined library.
+
+        Triggers lazy combine on first access.
+
+        Returns:
+            The normalizer, or ``None`` if no baseline inverter was found.
+
+        Example::
+
+            >>> print(ds.normalizer.baseline_cell.name)
+        """
+        self._ensure_combined()
+        if not self.entries:
+            return None
+        return self.entries[0].normalizer
+
+    @property
+    def baseline(self):
+        """The baseline :class:`~parsfet.models.liberty.Cell` used for normalisation.
+
+        Triggers lazy combine on first access.
+
+        Returns:
+            The baseline ``Cell`` object, or ``None`` if unavailable.
+
+        Example::
+
+            >>> print(ds.baseline.name, ds.baseline.area)
+        """
+        norm = self.normalizer
+        return norm.baseline_cell if norm else None
+
+    @property
+    def cell_names(self) -> list[str]:
+        """Sorted list of all cell names in the combined library.
+
+        Triggers lazy combine on first access.
+
+        Returns:
+            An empty list if no libraries are loaded.
+
+        Example::
+
+            >>> print(ds.cell_names[:5])
+        """
+        self._ensure_combined()
+        if not self.entries:
+            return []
+        return sorted(self.entries[0].library.cells.keys())
+
+    @property
+    def lef_cells(self) -> dict:
+        """Dict of LEF macro data matched to Liberty cells.
+
+        Populated after :meth:`load_lef` and lazy combine.
+        Returns an empty dict if no LEF files were loaded.
+
+        Example::
+
+            >>> matched = len(ds.lef_cells)
+        """
+        self._ensure_combined()
+        if not self.entries:
+            return {}
+        return self.entries[0].lef_cells or {}
+
+    @property
+    def tech_info(self):
+        """:class:`~parsfet.models.physical.TechInfo` from the loaded TechLEF.
+
+        ``None`` if no TechLEF file was loaded.
+
+        Example::
+
+            >>> print(ds.tech_info.metal_stack_height)
+        """
+        self._ensure_combined()
+        if not self.entries:
+            return None
+        return self.entries[0].tech_info
+
+    def cell(self, name: str):
+        """Look up a single :class:`~parsfet.models.liberty.Cell` by name.
+
+        Triggers lazy combine on first access.
+
+        Args:
+            name: Exact cell name as it appears in the Liberty file.
+
+        Returns:
+            The ``Cell`` object.
+
+        Raises:
+            KeyError: If the cell is not found in the combined library.
+            ValueError: If no libraries have been loaded.
+
+        Example::
+
+            >>> inv = ds.cell("INV_X1")
+            >>> print(inv.area)
+        """
+        return self.library.cells[name]
+
+    def __getitem__(self, name: str):
+        """Shorthand for :meth:`cell`.
+
+        Example::
+
+            >>> inv = ds["INV_X1"]
+        """
+        return self.cell(name)
 
     def to_dataframe(self) -> pd.DataFrame:
+
         """Convert all loaded data to a flat Pandas DataFrame.
 
         Each row represents a single cell. Columns include:
@@ -483,6 +613,8 @@ class Dataset:
             A DataFrame with one row per cell across all libraries.
         """
         rows = []
+
+        self._ensure_combined()
 
         for entry in self.entries:
             lib = entry.library
@@ -607,15 +739,12 @@ class Dataset:
 
         return X, y, label_map
 
-    def to_vector(self, entry_index: int = 0) -> list[float]:
+    def to_vector(self) -> list[float]:
         """Extract library-level fingerprint feature vector for ML.
 
         This returns a compact 15-element vector representing the technology
         library's characteristics. Unlike to_numpy() which returns per-cell
         features, this returns aggregate library statistics.
-
-        Args:
-            entry_index: Index of the library entry to vectorize (default 0).
 
         Returns:
             A 15-element feature vector:
@@ -631,13 +760,12 @@ class Dataset:
             >>> vector = ds.to_vector()
             >>> print(len(vector))  # 15
         """
+        self._ensure_combined()
+
         if not self.entries:
             return [0.0] * 15
 
-        if entry_index >= len(self.entries):
-            raise IndexError(f"Entry index {entry_index} out of range")
-
-        entry = self.entries[entry_index]
+        entry = self.entries[0]
 
         if not entry.normalizer:
             # No normalization available
@@ -742,9 +870,11 @@ class Dataset:
             A ZN combinational
             B ZN combinational
         """
+        self._ensure_combined()
+
         if entry_index >= len(self.entries):
             raise IndexError(f"Entry index {entry_index} out of range")
-        lib = self.entries[entry_index].library
+        lib = self.entries[0].library
         if cell_name not in lib.cells:
             raise KeyError(f"Cell '{cell_name}' not found in library entry {entry_index}")
         cell = lib.cells[cell_name]
@@ -821,9 +951,11 @@ class Dataset:
             >>> arcs = ds.query_cell_at("NAND2_X1", 0.05, 0.01, from_pin="A")
             >>> print(arcs[0]["delay_ns"], arcs[0]["energy_fj"])
         """
+        self._ensure_combined()
+
         if entry_index >= len(self.entries):
             raise IndexError(f"Entry index {entry_index} out of range")
-        entry = self.entries[entry_index]
+        entry = self.entries[0]
         lib = entry.library
         if cell_name not in lib.cells:
             raise KeyError(f"Cell '{cell_name}' not found in library entry {entry_index}")
@@ -892,25 +1024,21 @@ class Dataset:
 
         return results
 
-    def to_summary_dict(self, entry_index: int = 0) -> dict:
+    def to_summary_dict(self) -> dict:
         """Generate a fingerprint-like summary dictionary.
 
         Returns a dictionary similar to TechnologyFingerprint.to_dict()
         for JSON export and human-readable summaries.
 
-        Args:
-            entry_index: Index of the library entry to summarize (default 0).
-
         Returns:
             A dictionary with baseline, statistics, and cell counts.
         """
+        self._ensure_combined()
+
         if not self.entries:
             return {"error": "No entries loaded"}
 
-        if entry_index >= len(self.entries):
-            return {"error": f"Entry index {entry_index} out of range"}
-
-        entry = self.entries[entry_index]
+        entry = self.entries[0]
         lib = entry.library
 
         if not entry.normalizer:
@@ -985,7 +1113,7 @@ class Dataset:
             },
         }
 
-    def export_to_json(self, entry_index: int = 0, include_port_geometry: bool = False) -> dict:
+    def export_to_json(self, include_port_geometry: bool = False) -> dict:
         """Export combined Liberty + LEF/TechLEF data to a JSON-serializable dict.
 
         This produces a comprehensive JSON structure that includes:
@@ -994,7 +1122,6 @@ class Dataset:
         - TechLEF technology data (metal stack, layer min sizes)
 
         Args:
-            entry_index: Index of the library entry to export (default 0).
             include_port_geometry: If True, each pin in the output will include
                 a 'ports' list of raw rectangles (x1, y1, x2, y2, layer)
                 from the LEF port geometry. Disabled by default to keep the
@@ -1010,13 +1137,12 @@ class Dataset:
             >>> with open("output.json", "w") as f:
             ...     json.dump(data, f, indent=2)
         """
+        self._ensure_combined()
+
         if not self.entries:
             return {"error": "No libraries loaded"}
 
-        if entry_index >= len(self.entries):
-            return {"error": f"Entry index {entry_index} out of range"}
-
-        entry = self.entries[entry_index]
+        entry = self.entries[0]
 
         # Get base normalized JSON from normalizer
         if entry.normalizer:
@@ -1078,17 +1204,21 @@ class Dataset:
 
         return result
 
-    def save_json(self, path: Path | str, entry_index: int = 0, indent: int = 2, include_port_geometry: bool = False) -> None:
+    def save_json(
+        self,
+        path: Path | str,
+        indent: int = 2,
+        include_port_geometry: bool = False,
+    ) -> None:
         """Save combined Liberty + LEF/TechLEF data to a JSON file.
 
         Args:
             path: Output file path.
-            entry_index: Index of the library entry to export (default 0).
             indent: JSON indentation (default 2).
             include_port_geometry: If True, includes raw port rectangle coordinates
                 for each pin. See export_to_json() for details.
         """
-        data = self.export_to_json(entry_index, include_port_geometry=include_port_geometry)
+        data = self.export_to_json(include_port_geometry=include_port_geometry)
         with open(path, "w") as f:
             json.dump(data, f, indent=indent)
 

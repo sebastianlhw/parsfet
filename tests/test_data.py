@@ -8,12 +8,14 @@ from parsfet.data import FEATURE_COLUMNS, Dataset, load_files, load_from_pattern
 
 
 def test_load_files_single(sample_liberty_file):
-    """Test loading a single Liberty file."""
+    """Test loading a single Liberty file produces a combined single entry."""
     ds = load_files([sample_liberty_file])
+    df = ds.to_dataframe()  # triggers lazy combine
 
     assert len(ds.entries) == 1
     assert ds.entries[0].library is not None
     assert len(ds.entries[0].metrics) > 0
+    assert not df.empty
 
 
 def test_to_dataframe_columns(sample_liberty_file):
@@ -106,10 +108,11 @@ def test_feature_columns_count():
 
 
 def test_load_tech_lef(sample_liberty_file, sample_lef_file):
-    """Test loading TechLEF adds tech_info to entries."""
+    """Test loading TechLEF adds tech_info to the combined entry."""
     ds = Dataset()
     ds.load_files([sample_liberty_file])
     ds.load_tech_lef(sample_lef_file)  # Use LEF file as TechLEF (has layers)
+    ds.to_dataframe()  # trigger lazy combine
 
     assert ds.entries[0].tech_info is not None
     assert ds.entries[0].tech_info.units_database == 1000
