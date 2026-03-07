@@ -69,6 +69,7 @@ class NormalizedMetrics:
     raw_input_cap: float = 0.0
     raw_e0_unit: float = 0.0  # Internal energy
     raw_k_unit_per_pf: float = 0.0  # Switching energy slope (unit/pF)
+    raw_power_fo4: Optional[float] = None  # Switching energy at FO4 op-point; None = no power tables
 
     # Fit quality metrics
     fit_r_squared: float = 1.0  # R² of linear fit (1.0 = perfect)
@@ -115,6 +116,7 @@ class NormalizedMetrics:
                 "input_cap_pf": self.raw_input_cap,
                 "e0_unit": self.raw_e0_unit,
                 "k_unit_per_pf": self.raw_k_unit_per_pf,
+                "power_fo4": self.raw_power_fo4,  # None when no power tables in library
             },
         }
 
@@ -404,6 +406,13 @@ class INVD1Normalizer:
         # Estimate drive strength from area (larger cell = more drive)
         drive_strength = area_ratio if area_ratio > 0 else 1.0
 
+        # Switching energy at FO4 operating point (direct NLDM lookup, not linearized).
+        # Set to None when the cell has no power arcs — distinguishes "zero energy" from
+        # "power tables not available" when the caller inspects the DataFrame or JSON.
+        raw_power_fo4: Optional[float] = (
+            cell.power_at(self.fo4_slew, self.fo4_load) if cell.power_arcs else None
+        )
+
         return NormalizedMetrics(
             cell_name=cell.name,
             cell_type=cell_type,
@@ -425,6 +434,7 @@ class INVD1Normalizer:
             raw_input_cap=raw_input_cap,
             raw_e0_unit=raw_e0,
             raw_k_unit_per_pf=raw_k_unit_per_pf,
+            raw_power_fo4=raw_power_fo4,
             fit_r_squared=fit_r2,
             fit_residual_pct=fit_residual_pct,
             power_fit_r_squared=p_r2,
@@ -521,9 +531,10 @@ class INVD1Normalizer:
             raw_input_cap=raw_input_cap,
             raw_e0_unit=raw_e0_unit,
             raw_k_unit_per_pf=raw_k_unit_per_pf,
+            raw_power_fo4=None,  # No power tables available for JSON-loaded cells
             fit_r_squared=1.0,  # No fit data available from raw
             fit_residual_pct=0.0,
-            power_fit_r_squared=1.0, 
+            power_fit_r_squared=1.0,
         )
 
     def get_summary(self) -> dict:

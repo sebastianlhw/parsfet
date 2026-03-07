@@ -513,6 +513,7 @@ class Dataset:
                     "raw_k_ns_per_pf": m.raw_k_ns_per_pf,
                     "raw_leakage": m.raw_leakage,
                     "raw_input_cap_pf": m.raw_input_cap,
+                    "raw_power_fo4": m.raw_power_fo4,  # None = no power tables; 0.0 = valid zero-energy result
                     # Cell properties
                     "num_inputs": m.num_inputs,
                     "num_outputs": m.num_outputs,
@@ -706,6 +707,190 @@ class Dataset:
         See that function for full documentation and examples.
         """
         return _estimate_path_delay_impl(self, path, config)
+
+    def list_cell_arcs(
+        self,
+        cell_name: str,
+        entry_index: int = 0,
+    ) -> list[dict]:
+        """List all timing arcs defined for a cell.
+
+        Use this as a discovery step before calling :meth:`query_cell_at` to find
+        the exact ``from_pin``, ``to_pin``, and ``timing_type`` values available.
+
+        Args:
+            cell_name: Name of the cell.
+            entry_index: Index of the library entry (default 0).
+
+        Returns:
+            A list of dicts, one per arc, each with:
+            - ``from_pin`` (str): Related (input) pin driving the arc.
+            - ``to_pin`` (str): Output pin where the arc terminates.
+            - ``timing_type`` (str | None): Arc semantics (e.g. ``"combinational"``,
+              ``"rising_edge"``, ``"setup_rising"``).
+            - ``timing_sense`` (str): Unateness (e.g. ``"positive_unate"``).
+
+        Raises:
+            KeyError: If ``cell_name`` is not found in the entry.
+            IndexError: If ``entry_index`` is out of range.
+
+        Example:
+            >>> ds = Dataset().load_files(["lib.lib"])
+            >>> arcs = ds.list_cell_arcs("NAND2_X1")
+            >>> for arc in arcs:
+            ...     print(arc["from_pin"], arc["to_pin"], arc["timing_type"])
+            A ZN combinational
+            B ZN combinational
+        """
+        if entry_index >= len(self.entries):
+            raise IndexError(f"Entry index {entry_index} out of range")
+        lib = self.entries[entry_index].library
+        if cell_name not in lib.cells:
+            raise KeyError(f"Cell '{cell_name}' not found in library entry {entry_index}")
+        cell = lib.cells[cell_name]
+
+        # NOTE: The Liberty parser flattens all timing{} blocks into Cell.timing_arcs
+        # without retaining which output pin each arc belongs to. We therefore cannot
+        # reliably determine to_pin per arc — it is always returned as None.
+        # TODO: store the owning output-pin name on TimingArc during parsing so
+        #       to_pin can be populated correctly.
+        return [
+            {
+                "from_pin": arc.related_pin,
+                "to_pin": None,  # Not available without parser-side attribution
+                "timing_type": arc.timing_type,
+                "timing_sense": arc.timing_sense,
+            }
+            for arc in cell.timing_arcs
+        ]
+
+    def query_cell_at(
+        self,
+        cell_name: str,
+        slew_ns: float,
+        load_pf: float,
+        *,
+        from_pin: "Optional[str]" = None,
+        to_pin: "Optional[str]" = None,
+        timing_type: "Optional[str]" = None,
+        entry_index: int = 0,
+    ) -> list[dict]:
+        """Query delay, output slew, and switching energy at a specific operating point.
+
+        Uses the raw NLDM lookup tables for interpolation (more accurate than the linear
+        D0+k approximation away from the FO4 point). Accepts canonical units (ns, pF)
+        and converts to library raw units internally.
+
+        Args:
+            cell_name: Name of the cell to query.
+            slew_ns: Input transition time in **nanoseconds** (canonical units).
+            load_pf: Output load capacitance in **picofarads** (canonical units).
+            from_pin: Filter to arcs driven by this input pin (e.g. ``"A"``). ``None``
+                      includes all input pins.
+            to_pin: Accepted for forward-compatibility but **does not currently filter**
+                    results. The Liberty parser flattens ``timing{}`` blocks into a single
+                    ``Cell.timing_arcs`` list without retaining which output pin each arc
+                    belongs to, so per-output-pin filtering is not yet possible.
+                    Pass ``None`` (default) to avoid confusion.
+            timing_type: Filter by arc type (e.g. ``"combinational"``, ``"rising_edge"``).
+                         ``None`` includes all types.
+            entry_index: Index of the library entry (default 0).
+
+        Returns:
+            A list of dicts, one per matching arc, each containing:
+
+            - ``from_pin`` (str): Related input pin.
+            - ``timing_type`` (str | None): Arc timing type.
+            - ``timing_sense`` (str): Unateness.
+            - ``delay_ns`` (float): Average rise+fall delay in nanoseconds.
+            - ``output_slew_ns`` (float): Average rise+fall output transition in nanoseconds.
+            - ``energy_fj`` (float): Switching energy in library energy units at the
+              given operating point. ``0.0`` when no power tables exist for this arc.
+
+        Raises:
+            KeyError: If ``cell_name`` is not found in the library entry.
+            IndexError: If ``entry_index`` is out of range.
+            ValueError: If no timing arcs match the given filters.
+
+        Example:
+            >>> ds = Dataset().load_files(["lib.lib"])
+            >>> # All arcs for INV_X1
+            >>> arcs = ds.query_cell_at("INV_X1", slew_ns=0.05, load_pf=0.01)
+            >>> print(arcs[0]["delay_ns"])
+            >>> # Specific arc for NAND2_X1
+            >>> arcs = ds.query_cell_at("NAND2_X1", 0.05, 0.01, from_pin="A")
+            >>> print(arcs[0]["delay_ns"], arcs[0]["energy_fj"])
+        """
+        if entry_index >= len(self.entries):
+            raise IndexError(f"Entry index {entry_index} out of range")
+        entry = self.entries[entry_index]
+        lib = entry.library
+        if cell_name not in lib.cells:
+            raise KeyError(f"Cell '{cell_name}' not found in library entry {entry_index}")
+        cell = lib.cells[cell_name]
+
+        # Convert canonical ns/pF to raw library units for interpolation
+        un = lib.unit_normalizer
+        raw_slew = slew_ns / un.time_multiplier if un.time_multiplier > 0 else slew_ns
+        raw_load = load_pf / un.cap_multiplier if un.cap_multiplier > 0 else load_pf
+
+        # Build mapping from related_pin -> list[PowerArc] for fast energy lookup
+        power_by_pin: dict[str, list] = {}
+        for parc in cell.power_arcs:
+            key = parc.related_pin or ""
+            power_by_pin.setdefault(key, []).append(parc)
+
+        results: list[dict] = []
+        for arc in cell.timing_arcs:
+            # Apply filters
+            if from_pin is not None and arc.related_pin != from_pin:
+                continue
+            if timing_type is not None and arc.timing_type != timing_type:
+                continue
+            # TODO: to_pin filtering requires storing the owning output-pin name on
+            # TimingArc during parsing. For now, to_pin is silently ignored.
+
+            # Delay and output-slew from timing arc tables
+            delay = arc.delay_at(raw_slew, raw_load) * un.time_multiplier
+            out_slew = arc.output_transition_at(raw_slew, raw_load) * un.time_multiplier
+
+            # Energy from matching power arcs (same related_pin, or global arcs)
+            energy = 0.0
+            matching_parcs = power_by_pin.get(arc.related_pin or "", []) + power_by_pin.get("", [])
+            energy_vals: list[float] = []
+            for parc in matching_parcs:
+                if parc.rise_power:
+                    energy_vals.append(parc.rise_power.interpolate(raw_slew, raw_load))
+                if parc.fall_power:
+                    energy_vals.append(parc.fall_power.interpolate(raw_slew, raw_load))
+            if energy_vals:
+                energy = sum(energy_vals) / len(energy_vals)
+
+            results.append({
+                "from_pin": arc.related_pin,
+                "timing_type": arc.timing_type,
+                "timing_sense": arc.timing_sense,
+                "delay_ns": delay,
+                "output_slew_ns": out_slew,
+                "energy_fj": energy,
+            })
+
+        if not results:
+            active_filters = {
+                k: v for k, v in {
+                    "from_pin": from_pin,
+                    "timing_type": timing_type,
+                }.items() if v is not None
+            }
+            if active_filters:
+                raise ValueError(
+                    f"No timing arcs match filters {active_filters} for cell '{cell_name}'. "
+                    f"Use list_cell_arcs('{cell_name}') to see available arcs."
+                )
+            # No arcs at all (cell has no timing data)
+            return []
+
+        return results
 
     def to_summary_dict(self, entry_index: int = 0) -> dict:
         """Generate a fingerprint-like summary dictionary.

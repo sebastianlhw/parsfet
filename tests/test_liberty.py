@@ -281,3 +281,71 @@ def test_json_round_trip(sample_liberty_content):
     assert inv_rest.area == inv_orig.area
     assert len(inv_rest.pins) == len(inv_orig.pins)
     assert inv_rest.pins["Y"].function == inv_orig.pins["Y"].function
+
+
+# --- Tests for Cell.power_at() ---
+
+
+def test_cell_power_at_no_power_tables(sample_liberty_content):
+    """Cell.power_at() returns 0.0 when no power arcs/tables are defined."""
+    parser = LibertyParser()
+    lib = parser.parse_string(sample_liberty_content)
+    inv = lib.cells["INV_X1"]
+
+    # Sample lib has no power arcs on INV_X1
+    result = inv.power_at(slew=0.05, load=0.008)
+    assert result == 0.0
+
+
+def test_cell_power_at_with_power_tables():
+    """Cell.power_at() returns an averaged value when rise/fall power tables exist."""
+    from parsfet.models.liberty import Cell, LookupTable, Pin, PowerArc
+
+    # Build a minimal cell with power arcs
+    rise_lut = LookupTable(
+        index_1=[0.01, 0.1, 0.5],
+        index_2=[0.001, 0.01, 0.1],
+        values=[
+            [1.0, 1.5, 2.5],
+            [1.2, 1.7, 2.7],
+            [1.8, 2.3, 3.3],
+        ],
+    )
+    fall_lut = LookupTable(
+        index_1=[0.01, 0.1, 0.5],
+        index_2=[0.001, 0.01, 0.1],
+        values=[
+            [0.8, 1.3, 2.3],
+            [1.0, 1.5, 2.5],
+            [1.6, 2.1, 3.1],
+        ],
+    )
+    cell = Cell(
+        name="TEST_INV",
+        area=1.5,
+        pins={"A": Pin(name="A", direction="input", capacitance=0.002)},
+        power_arcs=[
+            PowerArc(related_pin="A", rise_power=rise_lut, fall_power=fall_lut),
+        ],
+    )
+
+    result = cell.power_at(slew=0.1, load=0.01)
+    # Should be average of rise_power(0.1, 0.01) = 1.7 and fall_power(0.1, 0.01) = 1.5 → 1.6
+    assert result == pytest.approx(1.6, rel=1e-3)
+    assert result > 0.0
+
+
+def test_cell_power_at_rise_only():
+    """Cell.power_at() works correctly with only a rise_power table (no fall)."""
+    from parsfet.models.liberty import Cell, LookupTable, Pin, PowerArc
+
+    rise_lut = LookupTable(index_1=[0.1], index_2=[0.01], values=[[2.0]])
+    cell = Cell(
+        name="HALF",
+        area=1.0,
+        pins={"A": Pin(name="A", direction="input", capacitance=0.001)},
+        power_arcs=[PowerArc(related_pin="A", rise_power=rise_lut)],
+    )
+    result = cell.power_at(slew=0.1, load=0.01)
+    assert result == pytest.approx(2.0, rel=1e-3)
+

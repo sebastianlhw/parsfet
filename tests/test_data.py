@@ -215,3 +215,140 @@ def test_export_to_json_empty():
     ds = Dataset()
     data = ds.export_to_json()
     assert "error" in data
+
+
+# --- Tests for raw_power_fo4 column ---
+
+
+def test_to_dataframe_power_fo4_column(sample_liberty_file):
+    """raw_power_fo4 column exists in the DataFrame; may be None for cells with no power tables."""
+    df = load_files([sample_liberty_file]).to_dataframe()
+    assert "raw_power_fo4" in df.columns
+
+
+# --- Tests for list_cell_arcs() ---
+
+
+def test_list_cell_arcs_inv(sample_liberty_file):
+    """list_cell_arcs returns one arc for INV_X1 (A → Y)."""
+    ds = load_files([sample_liberty_file])
+    arcs = ds.list_cell_arcs("INV_X1")
+
+    assert len(arcs) >= 1
+    # Should contain the A→Y arc
+    from_pins = [a["from_pin"] for a in arcs]
+    assert "A" in from_pins
+
+    arc_a = next(a for a in arcs if a["from_pin"] == "A")
+    assert "timing_type" in arc_a
+    assert "timing_sense" in arc_a
+    assert arc_a["timing_sense"] == "negative_unate"
+
+
+def test_list_cell_arcs_dff(sample_liberty_file):
+    """list_cell_arcs returns multiple arc types for DFF_X1 (clk-to-Q + constraints)."""
+    ds = load_files([sample_liberty_file])
+    arcs = ds.list_cell_arcs("DFF_X1")
+
+    assert len(arcs) >= 1
+    from_pins = [a["from_pin"] for a in arcs]
+    assert "CLK" in from_pins
+
+    timing_types = [a["timing_type"] for a in arcs]
+    # Should have at least a setup/hold or rising_edge arc
+    assert any(t in ("setup_rising", "hold_rising", "rising_edge") for t in timing_types)
+
+
+def test_list_cell_arcs_missing_cell(sample_liberty_file):
+    """list_cell_arcs raises KeyError for unknown cell name."""
+    ds = load_files([sample_liberty_file])
+    with pytest.raises(KeyError, match="NONEXISTENT"):
+        ds.list_cell_arcs("NONEXISTENT")
+
+
+def test_list_cell_arcs_out_of_range(sample_liberty_file):
+    """list_cell_arcs raises IndexError for bad entry_index."""
+    ds = load_files([sample_liberty_file])
+    with pytest.raises(IndexError):
+        ds.list_cell_arcs("INV_X1", entry_index=99)
+
+
+# --- Tests for query_cell_at() ---
+
+
+def test_query_cell_at_all_arcs(sample_liberty_file):
+    """query_cell_at with no filters returns all timing arcs for the cell."""
+    ds = load_files([sample_liberty_file])
+    arcs = ds.query_cell_at("INV_X1", slew_ns=0.05, load_pf=0.008)
+
+    assert len(arcs) >= 1
+    for arc in arcs:
+        assert "from_pin" in arc
+        assert "timing_type" in arc
+        assert "timing_sense" in arc
+        assert "delay_ns" in arc
+        assert "output_slew_ns" in arc
+        assert "energy_fj" in arc
+        # Delay and slew should be positive for a real arc
+        assert arc["delay_ns"] >= 0.0
+        assert arc["output_slew_ns"] >= 0.0
+
+
+def test_query_cell_at_from_pin_filter(sample_liberty_file):
+    """query_cell_at(from_pin='A') returns only arc(s) driven by pin A."""
+    ds = load_files([sample_liberty_file])
+    arcs = ds.query_cell_at("INV_X1", slew_ns=0.05, load_pf=0.008, from_pin="A")
+
+    assert len(arcs) >= 1
+    for arc in arcs:
+        assert arc["from_pin"] == "A"
+    # INV_X1 A→Y arc has delay tables — should be positive
+    assert arcs[0]["delay_ns"] > 0.0
+
+
+def test_query_cell_at_clk_to_q(sample_liberty_file):
+    """query_cell_at with timing_type='rising_edge' returns the clk-to-Q arc."""
+    ds = load_files([sample_liberty_file])
+    arcs = ds.query_cell_at(
+        "DFF_X1", slew_ns=0.1, load_pf=0.01, timing_type="rising_edge"
+    )
+
+    assert len(arcs) >= 1
+    for arc in arcs:
+        assert arc["timing_type"] == "rising_edge"
+    assert arcs[0]["delay_ns"] > 0.0
+
+
+def test_query_cell_at_bad_filter_raises(sample_liberty_file):
+    """query_cell_at raises ValueError when no arcs match the filter."""
+    ds = load_files([sample_liberty_file])
+    with pytest.raises(ValueError, match="No timing arcs match"):
+        ds.query_cell_at("INV_X1", slew_ns=0.05, load_pf=0.008, from_pin="NONEXISTENT_PIN")
+
+
+def test_query_cell_at_missing_cell(sample_liberty_file):
+    """query_cell_at raises KeyError for unknown cell name."""
+    ds = load_files([sample_liberty_file])
+    with pytest.raises(KeyError, match="NONEXIST"):
+        ds.query_cell_at("NONEXIST", slew_ns=0.05, load_pf=0.01)
+
+
+def test_query_cell_at_canonical_units(sample_liberty_file):
+    """query_cell_at returns delay in ns regardless of source library units (ns library)."""
+    ds = load_files([sample_liberty_file])
+    # The sample lib uses 1ns time unit and 1pf cap unit.
+    # Querying at a point inside the table should give sensible ns values (~0.05 - 0.5ns).
+    arcs = ds.query_cell_at("INV_X1", slew_ns=0.05, load_pf=0.008)
+    delay = arcs[0]["delay_ns"]
+    # Should be in a reasonable ns range, not in ps (i.e. not ~50000)
+    assert 0.001 < delay < 10.0
+
+
+def test_query_cell_at_energy_no_power_tables(sample_liberty_file):
+    """energy_fj is 0.0 when the library has no power tables."""
+    ds = load_files([sample_liberty_file])
+    arcs = ds.query_cell_at("INV_X1", slew_ns=0.05, load_pf=0.008)
+    # Sample lib has no power arcs, so energy should be 0.0
+    for arc in arcs:
+        assert arc["energy_fj"] == 0.0
+

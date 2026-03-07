@@ -526,6 +526,28 @@ class Cell(BaseModel):
         trans = [t for t in trans if t > 0]
         return sum(trans) / len(trans) if trans else slew
 
+    def power_at(self, slew: float, load: float) -> float:
+        """Calculates average switching energy at a specific operating point.
+
+        Averages the rise_power and fall_power lookup tables across all power arcs.
+        Returns 0.0 if the cell has no power tables (e.g. cells loaded from JSON export).
+
+        Args:
+            slew: Input transition time in **library time units** (same axis as delay_at).
+            load: Output load capacitance in **library capacitance units** (same axis as delay_at).
+
+        Returns:
+            Average switching energy in library energy units (e.g. fJ for ASAP7 libs that
+            use ff units). Returns 0.0 when no power arcs or tables are present.
+        """
+        values: list[float] = []
+        for arc in self.power_arcs:
+            if arc.rise_power:
+                values.append(arc.rise_power.interpolate(slew, load))
+            if arc.fall_power:
+                values.append(arc.fall_power.interpolate(slew, load))
+        return sum(values) / len(values) if values else 0.0
+
     @property
     def clk_to_q_arcs(self) -> list["TimingArc"]:
         """Timing arcs that represent clock-to-Q propagation (``rising_edge`` / ``falling_edge``).
