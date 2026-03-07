@@ -106,19 +106,48 @@ class LookupTable(BaseModel):
 
         Uses numpy.interp for 1D tables and scipy RegularGridInterpolator for 2D tables.
         Values outside the table indices are clamped to the nearest edge.
+        Degenerate tables (empty index axes, single scalar value) are handled
+        gracefully by returning the nearest available value rather than raising.
 
         Args:
             slew: The input transition time (index_1).
             load: The output load capacitance (index_2). Required for 2D tables.
 
         Returns:
-            The interpolated value.
+            The interpolated value, or 0.0 for completely empty tables.
         """
         if not self.values:
             return 0.0
 
+        # Guard: flatten values regardless of nesting depth for scalar checks
+        flat = np.asarray(self.values).ravel()
+        if flat.size == 0:
+            return 0.0
+
+        n1 = len(self.index_1) if self.index_1 else 0
+        n2 = len(self.index_2) if self.index_2 else 0
+
+        # Degenerate: no index axes at all — return the single scalar value
+        if n1 == 0 and n2 == 0:
+            return float(flat[0])
+
+        # Degenerate 2D: one axis is trivial (0 or 1 point) — collapse to 1D
         if self.is_2d:
-            # 2D interpolation with lazy caching
+            if n1 == 0 or n2 == 0:
+                # Single-row or single-column table: return first/only value
+                return float(flat[0])
+            if n1 == 1 and n2 == 1:
+                return float(flat[0])
+            # One axis has a single point — interpolate on the other
+            if n1 == 1:
+                return float(np.interp(
+                    load if load is not None else 0.0,
+                    self.index_2, np.asarray(self.values).ravel()
+                ))
+            if n2 == 1:
+                return float(np.interp(slew, self.index_1, np.asarray(self.values).ravel()))
+
+            # Normal 2D interpolation with lazy caching
             if not hasattr(self, "_interpolator"):
                 self._interpolator = RegularGridInterpolator(
                     (self.index_1, self.index_2),
@@ -126,10 +155,11 @@ class LookupTable(BaseModel):
                     bounds_error=False,
                     fill_value=None,  # Extrapolate using nearest edge
                 )
-            # Scipy supports vectorized input: [[slew, load]]
             return float(self._interpolator([[slew, load if load is not None else 0.0]])[0])
         else:
             # 1D interpolation
+            if n1 == 0:
+                return float(flat[0])
             return float(np.interp(slew, self.index_1, self.values))
 
     def fit_linear_model(self, slew: float) -> tuple[float, float, float]:

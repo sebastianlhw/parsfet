@@ -349,3 +349,131 @@ def test_cell_power_at_rise_only():
     result = cell.power_at(slew=0.1, load=0.01)
     assert result == pytest.approx(2.0, rel=1e-3)
 
+
+class TestLibertyTableDegenerate:
+    """Regression tests for degenerate NLDM table shapes that previously crashed scipy.
+
+    Root cause: LibertyTable.interpolate() built a RegularGridInterpolator with
+    empty index axes, causing a ValueError: "There are 0 points and N values in dimension 0".
+    These tests ensure every degenerate shape degrades gracefully.
+    """
+
+    def _make_lut(self, index_1, index_2, values):
+        """Helper: build a 2D LookupTable."""
+        from parsfet.models.liberty import LookupTable
+        return LookupTable(index_1=index_1, index_2=index_2, values=values)
+
+    def _make_lut_1d(self, index_1, values):
+        """Helper: build a 1D LookupTable (no index_2)."""
+        from parsfet.models.liberty import LookupTable
+        return LookupTable(index_1=index_1, values=values)
+
+    # ------------------------------------------------------------------
+    # Degenerate 2D shapes
+    # ------------------------------------------------------------------
+
+    def test_empty_both_axes_returns_scalar(self):
+        """index_1=[], index_2=[], 1 value → returns that value."""
+        lut = self._make_lut([], [], [[0.0015]])
+        assert lut.interpolate(0.1, 0.01) == pytest.approx(0.0015)
+
+    def test_empty_index1_returns_scalar(self):
+        """index_1=[], index_2=[...], 1 value → returns flat[0] (the reported crash)."""
+        lut = self._make_lut([], [0.01, 0.05, 0.1], [[0.0015]])
+        assert lut.interpolate(0.1, 0.01) == pytest.approx(0.0015)
+
+    def test_empty_index2_returns_scalar(self):
+        """index_1=[...], index_2=[], 1 value → returns flat[0]."""
+        lut = self._make_lut([0.1, 0.5, 1.0], [], [[0.0015]])
+        assert lut.interpolate(0.1, 0.01) == pytest.approx(0.0015)
+
+    def test_1x1_table_returns_scalar(self):
+        """1×1 table → returns the single value."""
+        lut = self._make_lut([0.1], [0.01], [[2.5]])
+        assert lut.interpolate(0.1, 0.01) == pytest.approx(2.5)
+        # Also check with different query point — should still return the scalar
+        assert lut.interpolate(0.5, 0.1) == pytest.approx(2.5)
+
+    def test_1xN_table_interpolates_on_load(self):
+        """1×N table (single slew row) → interpolates on load axis."""
+        lut = self._make_lut([0.1], [0.01, 0.05, 0.10], [[1.0, 2.0, 3.0]])
+        # At load=0.01 → 1.0, at load=0.10 → 3.0
+        assert lut.interpolate(0.5, 0.01) == pytest.approx(1.0)
+        assert lut.interpolate(0.5, 0.10) == pytest.approx(3.0)
+        # Midpoint interpolation
+        assert lut.interpolate(0.5, 0.05) == pytest.approx(2.0)
+
+    def test_Nx1_table_interpolates_on_slew(self):
+        """N×1 table (single load column) → interpolates on slew axis."""
+        lut = self._make_lut([0.1, 0.5, 1.0], [0.01], [[1.0], [3.0], [5.0]])
+        assert lut.interpolate(0.1, 0.99) == pytest.approx(1.0)
+        assert lut.interpolate(1.0, 0.99) == pytest.approx(5.0)
+        assert lut.interpolate(0.5, 0.99) == pytest.approx(3.0)
+
+    def test_normal_2d_table_unchanged(self):
+        """Normal N×M table still works correctly after guard changes."""
+        lut = self._make_lut(
+            [0.1, 0.5],
+            [0.01, 0.1],
+            [[1.0, 2.0],
+             [3.0, 4.0]],
+        )
+        # Corners
+        assert lut.interpolate(0.1, 0.01) == pytest.approx(1.0, rel=1e-3)
+        assert lut.interpolate(0.1, 0.10) == pytest.approx(2.0, rel=1e-3)
+        assert lut.interpolate(0.5, 0.01) == pytest.approx(3.0, rel=1e-3)
+        assert lut.interpolate(0.5, 0.10) == pytest.approx(4.0, rel=1e-3)
+
+    # ------------------------------------------------------------------
+    # Degenerate 1D shapes
+    # ------------------------------------------------------------------
+
+    def test_1d_empty_index1_returns_scalar(self):
+        """1D table: index_1=[], 1 value → returns flat[0]."""
+        lut = self._make_lut_1d([], [0.0015])
+        assert lut.interpolate(0.1) == pytest.approx(0.0015)
+
+    def test_empty_values_returns_zero(self):
+        """Completely empty table → 0.0 (pre-existing guard unchanged)."""
+        lut = self._make_lut([], [], [])
+        assert lut.interpolate(0.1, 0.01) == 0.0
+
+    # ------------------------------------------------------------------
+    # Integration: degenerate power arc survives full resolve()
+    # ------------------------------------------------------------------
+
+    def test_degenerate_power_arc_survives_normalize(self):
+        """A cell with a degenerate power table (index_1=[]) resolves without crashing."""
+        from parsfet.models.liberty import Cell, Pin, PowerArc
+        from parsfet.normalizers.invd1 import INVD1Normalizer
+        from parsfet.models.liberty import LookupTable
+
+        # Baseline inverter — normal table
+        baseline_lut = LookupTable(
+            index_1=[0.1, 0.5], index_2=[0.01, 0.1],
+            values=[[1.0, 2.0], [3.0, 4.0]]
+        )
+        # Cell under test — degenerate power (scalar wrapped in 2D struct)
+        degenerate_lut = LookupTable(index_1=[], index_2=[], values=[[0.0015]])
+
+        inv = Cell(
+            name="INV_X1",
+            area=1.0,
+            pins={"A": Pin(name="A", direction="input", capacitance=0.01)},
+            power_arcs=[PowerArc(related_pin="A", rise_power=baseline_lut)],
+            timing_arcs=[],
+        )
+        cell_b = Cell(
+            name="BUF_X1",
+            area=2.0,
+            pins={"A": Pin(name="A", direction="input", capacitance=0.01)},
+            power_arcs=[PowerArc(related_pin="A", rise_power=degenerate_lut)],
+            timing_arcs=[],
+        )
+        from parsfet.models.liberty import LibertyLibrary
+        lib = LibertyLibrary(name="test_degen", cells={"INV_X1": inv, "BUF_X1": cell_b})
+
+        # Should not raise
+        normalizer = INVD1Normalizer(lib)
+        metrics = normalizer.normalize(cell_b)
+        assert metrics is not None
