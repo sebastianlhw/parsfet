@@ -330,8 +330,8 @@ def test_cell_power_at_with_power_tables():
     )
 
     result = cell.power_at(slew=0.1, load=0.01)
-    # Should be average of rise_power(0.1, 0.01) = 1.7 and fall_power(0.1, 0.01) = 1.5 → 1.6
-    assert result == pytest.approx(1.6, rel=1e-3)
+    # Should be max of rise_power(0.1, 0.01) = 1.7 and fall_power(0.1, 0.01) = 1.5 → 1.7
+    assert result == pytest.approx(1.7, rel=1e-3)
     assert result > 0.0
 
 
@@ -477,3 +477,74 @@ class TestLibertyTableDegenerate:
         normalizer = INVD1Normalizer(lib)
         metrics = normalizer.normalize(cell_b)
         assert metrics is not None
+
+
+def test_cell_timing_and_power_queries_with_bounds():
+    """Verify edge, related_pin, and bound filtering on Cell timing and power methods."""
+    from parsfet.models.liberty import Cell, LookupTable, Pin, TimingArc, PowerArc
+
+    # Arc 1: Pin A, Delay Rise=1.0, Fall=2.0 | Trans Rise=0.1, Fall=0.2 | Power Rise=10.0, Fall=20.0
+    arc_a_timing = TimingArc(
+        related_pin="A",
+        cell_rise=LookupTable(index_1=[0.1], index_2=[0.01], values=[[1.0]]),
+        cell_fall=LookupTable(index_1=[0.1], index_2=[0.01], values=[[2.0]]),
+        rise_transition=LookupTable(index_1=[0.1], index_2=[0.01], values=[[0.1]]),
+        fall_transition=LookupTable(index_1=[0.1], index_2=[0.01], values=[[0.2]]),
+    )
+    arc_a_power = PowerArc(
+        related_pin="A",
+        rise_power=LookupTable(index_1=[0.1], index_2=[0.01], values=[[10.0]]),
+        fall_power=LookupTable(index_1=[0.1], index_2=[0.01], values=[[20.0]]),
+    )
+
+    # Arc 2: Pin B, Delay Rise=3.0, Fall=4.0 | Trans Rise=0.3, Fall=0.4 | Power Rise=30.0, Fall=40.0
+    arc_b_timing = TimingArc(
+        related_pin="B",
+        cell_rise=LookupTable(index_1=[0.1], index_2=[0.01], values=[[3.0]]),
+        cell_fall=LookupTable(index_1=[0.1], index_2=[0.01], values=[[4.0]]),
+        rise_transition=LookupTable(index_1=[0.1], index_2=[0.01], values=[[0.3]]),
+        fall_transition=LookupTable(index_1=[0.1], index_2=[0.01], values=[[0.4]]),
+    )
+    arc_b_power = PowerArc(
+        related_pin="B",
+        rise_power=LookupTable(index_1=[0.1], index_2=[0.01], values=[[30.0]]),
+        fall_power=LookupTable(index_1=[0.1], index_2=[0.01], values=[[40.0]]),
+    )
+
+    cell = Cell(
+        name="TEST_NAND2",
+        area=2.0,
+        pins={
+            "A": Pin(name="A", direction="input"),
+            "B": Pin(name="B", direction="input"),
+            "Y": Pin(name="Y", direction="output")
+        },
+        timing_arcs=[arc_a_timing, arc_b_timing],
+        power_arcs=[arc_a_power, arc_b_power]
+    )
+
+    slew, load = 0.1, 0.01
+
+    # Default -> max over everything (Pin B Fall is largest for all)
+    assert cell.delay_at(slew, load) == 4.0
+    assert cell.output_transition_at(slew, load) == 0.4
+    assert cell.power_at(slew, load) == 40.0
+
+    # Min bound -> min over everything (Pin A Rise is smallest for all)
+    assert cell.delay_at(slew, load, bound="min") == 1.0
+    assert cell.output_transition_at(slew, load, bound="min") == 0.1
+    assert cell.power_at(slew, load, bound="min") == 10.0
+
+    # Filter by Pin A -> specific pin values
+    assert cell.delay_at(slew, load, related_pin="A", bound="max") == 2.0  # Max of A (Rise 1.0, Fall 2.0)
+    assert cell.delay_at(slew, load, related_pin="A", bound="min") == 1.0  # Min of A
+    assert cell.power_at(slew, load, related_pin="B", bound="max") == 40.0 # Max of B
+
+    # Filter by Edge -> specific edge values across multiple pins
+    assert cell.delay_at(slew, load, edge="rise", bound="max") == 3.0  # Max of (A Rise 1.0, B Rise 3.0)
+    assert cell.delay_at(slew, load, edge="rise", bound="min") == 1.0  # Min of (A Rise 1.0, B Rise 3.0)
+    
+    # Filter by Edge AND Pin -> specific exact edge sequence
+    assert cell.delay_at(slew, load, related_pin="B", edge="fall") == 4.0
+    assert cell.output_transition_at(slew, load, related_pin="A", edge="fall") == 0.2
+    assert cell.power_at(slew, load, related_pin="A", edge="rise") == 10.0

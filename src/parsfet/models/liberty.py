@@ -5,7 +5,7 @@ cells, pins, timing arcs, power arcs, and lookup tables. It includes logic for
 interpolation, delay calculation, and linear model fitting.
 """
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 from pydantic import BaseModel, Field, computed_field, field_validator
@@ -331,29 +331,49 @@ class TimingArc(BaseModel):
             delays.append(self.cell_fall.center_value)
         return sum(delays) / len(delays) if delays else 0.0
 
-    def delay_at(self, slew: float, load: float) -> float:
+    def delay_at(
+        self, 
+        slew: float, 
+        load: float, 
+        edge: Optional[Literal["rise", "fall"]] = None,
+        bound: Literal["max", "min"] = "max",
+    ) -> float:
         """Calculates the delay at a specific operating point (slew, load).
 
-        Returns the average of rise and fall delays interpolated at the given point.
+        Returns the worst-case (maximum) or best-case (minimum) of rise and fall delays 
+        interpolated at the given point, unless a specific edge is requested.
         """
         delays = []
-        if self.cell_rise:
+        if self.cell_rise and edge in (None, "rise"):
             delays.append(self.cell_rise.interpolate(slew, load))
-        if self.cell_fall:
+        if self.cell_fall and edge in (None, "fall"):
             delays.append(self.cell_fall.interpolate(slew, load))
-        return sum(delays) / len(delays) if delays else 0.0
+            
+        if not delays:
+            return 0.0
+        return max(delays) if bound == "max" else min(delays)
 
-    def output_transition_at(self, slew: float, load: float) -> float:
+    def output_transition_at(
+        self, 
+        slew: float, 
+        load: float, 
+        edge: Optional[Literal["rise", "fall"]] = None,
+        bound: Literal["max", "min"] = "max",
+    ) -> float:
         """Calculates the output transition time at a specific operating point.
 
-        Returns the average of rise and fall output transitions.
+        Returns the worst-case (maximum) or best-case (minimum) of rise and fall output 
+        transitions, unless a specific edge is requested.
         """
         trans = []
-        if self.rise_transition:
+        if self.rise_transition and edge in (None, "rise"):
             trans.append(self.rise_transition.interpolate(slew, load))
-        if self.fall_transition:
+        if self.fall_transition and edge in (None, "fall"):
             trans.append(self.fall_transition.interpolate(slew, load))
-        return sum(trans) / len(trans) if trans else slew  # Fallback to input slew
+            
+        if not trans:
+            return slew  # Fallback to input slew
+        return max(trans) if bound == "max" else min(trans)
 
     def constraint_at(self, data_slew: float, clock_slew: float) -> float:
         """Interpolates the setup or hold constraint at a specific operating point.
@@ -544,39 +564,101 @@ class Cell(BaseModel):
         ]
         return sum(delays) / len(delays) if delays else 0.0
 
-    def delay_at(self, slew: float, load: float) -> float:
-        """Calculates average delay across all timing arcs at specific operating point."""
-        delays = [arc.delay_at(slew, load) for arc in self.timing_arcs]
+    def delay_at(
+        self, 
+        slew: float, 
+        load: float, 
+        related_pin: Optional[str] = None, 
+        edge: Optional[Literal["rise", "fall"]] = None,
+        bound: Literal["max", "min"] = "max",
+    ) -> float:
+        """Calculates the delay across timing arcs at a specific operating point.
+        
+        Args:
+            slew: Input transition time.
+            load: Output load capacitance.
+            related_pin: Optional. If specified, only considers arcs from this input pin.
+            edge: Optional. 'rise' or 'fall'. If specified, only considers this output transition.
+            bound: 'max' for setup/late-arrival (default), 'min' for hold/early-arrival.
+        """
+        arcs = self.timing_arcs
+        if related_pin:
+            arcs = [arc for arc in arcs if arc.related_pin == related_pin]
+            
+        delays = [arc.delay_at(slew, load, edge=edge, bound=bound) for arc in arcs]
         delays = [d for d in delays if d > 0]
-        return sum(delays) / len(delays) if delays else 0.0
+        
+        if not delays:
+            return 0.0
+        return max(delays) if bound == "max" else min(delays)
 
-    def output_transition_at(self, slew: float, load: float) -> float:
-        """Calculates average output transition across all arcs at specific operating point."""
-        trans = [arc.output_transition_at(slew, load) for arc in self.timing_arcs]
+    def output_transition_at(
+        self, 
+        slew: float, 
+        load: float, 
+        related_pin: Optional[str] = None, 
+        edge: Optional[Literal["rise", "fall"]] = None,
+        bound: Literal["max", "min"] = "max",
+    ) -> float:
+        """Calculates the output transition across arcs at a specific operating point.
+        
+        Args:
+            slew: Input transition time.
+            load: Output load capacitance.
+            related_pin: Optional. If specified, only considers arcs from this input pin.
+            edge: Optional. 'rise' or 'fall'. If specified, only considers this output transition.
+            bound: 'max' (default) or 'min' to aggregate multiple arcs.
+        """
+        arcs = self.timing_arcs
+        if related_pin:
+            arcs = [arc for arc in arcs if arc.related_pin == related_pin]
+            
+        trans = [arc.output_transition_at(slew, load, edge=edge, bound=bound) for arc in arcs]
         trans = [t for t in trans if t > 0]
-        return sum(trans) / len(trans) if trans else slew
+        
+        if not trans:
+            return slew
+        return max(trans) if bound == "max" else min(trans)
 
-    def power_at(self, slew: float, load: float) -> float:
-        """Calculates average switching energy at a specific operating point.
+    def power_at(
+        self, 
+        slew: float, 
+        load: float, 
+        related_pin: Optional[str] = None, 
+        edge: Optional[Literal["rise", "fall"]] = None,
+        bound: Literal["max", "min"] = "max",
+    ) -> float:
+        """Calculates the switching energy at a specific operating point.
 
-        Averages the rise_power and fall_power lookup tables across all power arcs.
+        Aggregates the rise_power and fall_power lookup tables across power arcs.
         Returns 0.0 if the cell has no power tables (e.g. cells loaded from JSON export).
 
         Args:
             slew: Input transition time in **library time units** (same axis as delay_at).
             load: Output load capacitance in **library capacitance units** (same axis as delay_at).
+            related_pin: Optional. If specified, only considers arcs related to this pin.
+            edge: Optional. 'rise' or 'fall'. If specified, only compares this transition's power.
+            bound: 'max' (default) or 'min' switching energy.
 
         Returns:
-            Average switching energy in library energy units (e.g. fJ for ASAP7 libs that
+            Calculated switching energy in library energy units (e.g. fJ for ASAP7 libs that
             use ff units). Returns 0.0 when no power arcs or tables are present.
         """
         values: list[float] = []
-        for arc in self.power_arcs:
-            if arc.rise_power:
+        
+        arcs = self.power_arcs
+        if related_pin:
+            arcs = [arc for arc in arcs if arc.related_pin == related_pin]
+            
+        for arc in arcs:
+            if arc.rise_power and edge in (None, "rise"):
                 values.append(arc.rise_power.interpolate(slew, load))
-            if arc.fall_power:
+            if arc.fall_power and edge in (None, "fall"):
                 values.append(arc.fall_power.interpolate(slew, load))
-        return sum(values) / len(values) if values else 0.0
+                
+        if not values:
+            return 0.0
+        return max(values) if bound == "max" else min(values)
 
     @property
     def clk_to_q_arcs(self) -> list["TimingArc"]:
