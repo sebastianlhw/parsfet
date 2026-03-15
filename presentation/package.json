@@ -1,0 +1,21 @@
+{
+  "name": "presentation",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "slidev slides.md",
+    "build": "slidev build slides.md"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@slidev/cli": "^0.48.0",
+    "@slidev/client": "^52.14.1",
+    "@slidev/theme-apple-basic": "^0.21.0",
+    "@slidev/types": "^52.14.1",
+    "monaco-editor": "^0.55.1",
+    "pyodide": "^0.29.3"
+  }
+}
